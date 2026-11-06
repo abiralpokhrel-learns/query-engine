@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create environment
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      - name: Build
+        shell: bash -el {0}
+        run: |
+          export QE_PREFIX="$CONDA_PREFIX"
+          export CMAKE_BIN="$CONDA_PREFIX/bin/cmake"
+          scripts/build.sh
+
+      - name: C++ parser tests
+        shell: bash -el {0}
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Correctness tests against DuckDB
+        shell: bash -el {0}
+        run: python -m pytest tests -q
+
+      - name: Differential fuzz against DuckDB
+        shell: bash -el {0}
+        run: python scripts/fuzz_compare.py --queries 200 --seed 2026
+
+      - name: One-command demo
+        shell: bash -el {0}
+        run: |
+          scripts/demo.sh > /tmp/qe-demo.out
+          grep -q "Selective date filter" /tmp/qe-demo.out
+          grep -q "Hash join" /tmp/qe-demo.out
+          grep -q "LEFT JOIN + HAVING" /tmp/qe-demo.out
+          grep -q "DISTINCT (version 2 clause)" /tmp/qe-demo.out

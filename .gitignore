@@ -1,0 +1,30 @@
+# Build output
+build/
+build-*/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Generated sample and benchmark data (recreate with scripts/generate_data.py
+# or let scripts/demo.sh generate it on first run)
+data/*.parquet
+data/manifest.json
+data/bench/
+
+# Local planning document
+query-engine-project-brief.docx
+
+# Local benchmark artifacts other than the published latest.* and chart
+benchmarks/results/bench_*.json
+benchmarks/results/bench_*.md
+benchmarks/charts/bench_*.png
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

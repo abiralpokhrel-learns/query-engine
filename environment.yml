@@ -1,0 +1,14 @@
+name: qe
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy=1.26
+  - pyarrow=13
+  - arrow-cpp=13
+  - duckdb=2.0
+  - cmake>=3.20
+  - ninja
+  - compilers
+  - pytest
+  - matplotlib

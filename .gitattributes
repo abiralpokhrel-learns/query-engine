@@ -1,0 +1,6 @@
+# Normalize text files to LF so Linux builds and CI are deterministic.
+* text=auto eol=lf
+
+*.parquet binary
+*.png binary
+*.docx binary
