@@ -33,9 +33,10 @@ From WSL2 / Linux with the environment already built:
 scripts/demo.sh
 ```
 
-The demo registers the included sample tables, prints the engine version, then
-runs representative filter, aggregate, join, top-k, `DISTINCT`, `LEFT JOIN`, and
-`HAVING` queries with timings and scan statistics. It rebuilds the binary or regenerates the sample data if either
+The demo registers the sample tables (generating them on first run if needed),
+prints the engine version, then runs representative filter, aggregate, join,
+top-k, `DISTINCT`, `LEFT JOIN`, and `HAVING` queries with timings and scan
+statistics. It rebuilds the binary or regenerates the sample data if either
 is missing.
 
 ## Quick start from a clean checkout
@@ -210,8 +211,8 @@ scripts/
   fuzz_compare.py     differential SQL fuzzer against DuckDB
   demo.sh             one-command demo
 benchmarks/
-  results/            latest + timestamped JSON/Markdown reports
-  charts/             charts generated from the JSON
+  results/            latest verified JSON/Markdown report
+  charts/             chart generated from the stored JSON
 data/                 generated sample data (200k sales rows, created by demo)
 docs/
   engineering-writeup.md
