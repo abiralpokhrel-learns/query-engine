@@ -12,8 +12,13 @@ else
   PREFIX="$HOME/qe-env"
 fi
 BUILD_DIR="${BUILD_DIR:-build}"
+CMAKE_ARGS=()
+if [[ "${QE_WARNINGS_AS_ERRORS:-OFF}" == "ON" ]]; then
+  CMAKE_ARGS+=("-DQE_WARNINGS_AS_ERRORS=ON")
+fi
 
 "$CMAKE_BIN" -S . -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}" \
-  -DCMAKE_PREFIX_PATH="$PREFIX"
+  -DCMAKE_PREFIX_PATH="$PREFIX" \
+  "${CMAKE_ARGS[@]}"
 "$CMAKE_BIN" --build "$BUILD_DIR" -j "${JOBS:-4}"
