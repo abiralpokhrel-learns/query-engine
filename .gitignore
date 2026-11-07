@@ -8,6 +8,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.coverage
+coverage.xml
 
 # Generated sample and benchmark data (recreate with scripts/generate_data.py
 # or let scripts/demo.sh generate it on first run)
