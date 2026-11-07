@@ -300,9 +300,7 @@ def main() -> int:
 
     customers = make_customers(rng, args.customers)
     products = make_products(rng, args.products)
-    sales = make_sales(
-        rng, args.rows, args.customers, args.products, start_date, args.days
-    )
+    sales = make_sales(rng, args.rows, args.customers, args.products, start_date, args.days)
     edges = make_edge_cases()
 
     tables = {
@@ -337,9 +335,7 @@ def main() -> int:
             f"{info['file_bytes'] / 1_000_000:.2f} MB"
         )
 
-    (args.out / "manifest.json").write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-    )
+    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {args.out / 'manifest.json'}")
     return 0
 

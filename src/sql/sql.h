@@ -76,12 +76,12 @@ struct SelectItem {
   ExprPtr expr;
   std::string alias;
   bool star = false;
-  std::string star_table;  // empty means all tables
+  std::string star_table; // empty means all tables
 };
 
 struct TableRef {
   std::string name;
-  std::string alias;  // defaults to name
+  std::string alias; // defaults to name
 };
 
 struct JoinClause {
@@ -118,7 +118,7 @@ struct SqlError : std::runtime_error {
 };
 
 class Lexer {
- public:
+public:
   explicit Lexer(std::string input);
   struct Token {
     enum class Type { Identifier, Number, String, Symbol, Keyword, End };
@@ -128,9 +128,11 @@ class Lexer {
     bool is_keyword = false;
   };
   Token Next();
-  const std::string& input() const { return input_; }
+  const std::string& input() const {
+    return input_;
+  }
 
- private:
+private:
   char Peek(size_t ahead = 0) const;
   char Advance();
   void SkipWhitespaceAndComments();
@@ -140,14 +142,14 @@ class Lexer {
 };
 
 class Parser {
- public:
+public:
   explicit Parser(std::string input);
   SelectStmt Parse();
 
   // Exposed for unit tests: parses a standalone expression (used by ORDER BY tests).
   ExprPtr ParseExpressionText(const std::string& text);
 
- private:
+private:
   using Token = Lexer::Token;
   using TokenType = Token::Type;
 
@@ -189,4 +191,4 @@ class Parser {
 std::string ExprToString(const ExprPtr& expr);
 std::string StatementToString(const SelectStmt& stmt);
 
-}  // namespace qe::sql
+} // namespace qe::sql

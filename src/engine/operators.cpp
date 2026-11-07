@@ -22,8 +22,8 @@ namespace {
 
 using arrow::internal::checked_cast;
 
-std::shared_ptr<arrow::RecordBatch> MakeEmptyBatchImpl(
-    const std::shared_ptr<arrow::Schema>& schema) {
+std::shared_ptr<arrow::RecordBatch>
+MakeEmptyBatchImpl(const std::shared_ptr<arrow::Schema>& schema) {
   std::vector<std::shared_ptr<arrow::Array>> columns;
   columns.reserve(schema->num_fields());
   for (int i = 0; i < schema->num_fields(); ++i) {
@@ -37,42 +37,47 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> MaterializeOperator(Operator&
   std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
   while (true) {
     ARROW_ASSIGN_OR_RAISE(auto batch, op.Next());
-    if (!batch) break;
-    if (batch->num_rows() > 0) batches.push_back(batch);
+    if (!batch)
+      break;
+    if (batch->num_rows() > 0)
+      batches.push_back(batch);
   }
-  if (batches.empty()) return MakeEmptyBatchImpl(op.schema());
-  if (batches.size() == 1) return batches[0];
+  if (batches.empty())
+    return MakeEmptyBatchImpl(op.schema());
+  if (batches.size() == 1)
+    return batches[0];
   ARROW_ASSIGN_OR_RAISE(auto table, arrow::Table::FromRecordBatches(op.schema(), batches));
   return table->CombineChunksToBatch();
 }
 
 void AppendScanFilters(const sql::ExprPtr& expr, const ParquetSource& source,
                        std::vector<ScanFilter>& out) {
-  if (!expr) return;
+  if (!expr)
+    return;
   if (expr->kind == sql::ExprKind::Binary && expr->binary_op == sql::BinaryOp::And) {
     AppendScanFilters(expr->left, source, out);
     AppendScanFilters(expr->right, source, out);
     return;
   }
-  if (expr->kind != sql::ExprKind::Binary) return;
+  if (expr->kind != sql::ExprKind::Binary)
+    return;
 
   sql::BinaryOp op = expr->binary_op;
   switch (op) {
-    case sql::BinaryOp::Eq:
-    case sql::BinaryOp::NotEq:
-    case sql::BinaryOp::Lt:
-    case sql::BinaryOp::LtEq:
-    case sql::BinaryOp::Gt:
-    case sql::BinaryOp::GtEq:
-      break;
-    default:
-      return;
+  case sql::BinaryOp::Eq:
+  case sql::BinaryOp::NotEq:
+  case sql::BinaryOp::Lt:
+  case sql::BinaryOp::LtEq:
+  case sql::BinaryOp::Gt:
+  case sql::BinaryOp::GtEq:
+    break;
+  default:
+    return;
   }
 
   sql::ExprPtr column;
   sql::ExprPtr literal;
-  if (expr->left->kind == sql::ExprKind::Column &&
-      expr->right->kind == sql::ExprKind::Literal) {
+  if (expr->left->kind == sql::ExprKind::Column && expr->right->kind == sql::ExprKind::Literal) {
     column = expr->left;
     literal = expr->right;
   } else if (expr->right->kind == sql::ExprKind::Column &&
@@ -80,19 +85,30 @@ void AppendScanFilters(const sql::ExprPtr& expr, const ParquetSource& source,
     column = expr->right;
     literal = expr->left;
     switch (op) {
-      case sql::BinaryOp::Lt: op = sql::BinaryOp::Gt; break;
-      case sql::BinaryOp::LtEq: op = sql::BinaryOp::GtEq; break;
-      case sql::BinaryOp::Gt: op = sql::BinaryOp::Lt; break;
-      case sql::BinaryOp::GtEq: op = sql::BinaryOp::LtEq; break;
-      default: break;
+    case sql::BinaryOp::Lt:
+      op = sql::BinaryOp::Gt;
+      break;
+    case sql::BinaryOp::LtEq:
+      op = sql::BinaryOp::GtEq;
+      break;
+    case sql::BinaryOp::Gt:
+      op = sql::BinaryOp::Lt;
+      break;
+    case sql::BinaryOp::GtEq:
+      op = sql::BinaryOp::LtEq;
+      break;
+    default:
+      break;
     }
   } else {
     return;
   }
 
-  if (literal->literal.type == sql::LiteralType::Null) return;
+  if (literal->literal.type == sql::LiteralType::Null)
+    return;
   auto index = source.FieldIndex(column->column);
-  if (!index.ok()) return;
+  if (!index.ok())
+    return;
   ScanFilter filter;
   filter.column_index = index.ValueOrDie();
   filter.op = op;
@@ -104,53 +120,53 @@ int CompareNumeric(const std::shared_ptr<arrow::Array>& left, int64_t i,
                    const std::shared_ptr<arrow::Array>& right, int64_t j,
                    const std::shared_ptr<arrow::DataType>& type) {
   switch (type->id()) {
-    case arrow::Type::INT8: {
-      auto& a = checked_cast<const arrow::Int8Array&>(*left);
-      auto& b = checked_cast<const arrow::Int8Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    case arrow::Type::INT16: {
-      auto& a = checked_cast<const arrow::Int16Array&>(*left);
-      auto& b = checked_cast<const arrow::Int16Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    case arrow::Type::INT32: {
-      auto& a = checked_cast<const arrow::Int32Array&>(*left);
-      auto& b = checked_cast<const arrow::Int32Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    case arrow::Type::INT64: {
-      auto& a = checked_cast<const arrow::Int64Array&>(*left);
-      auto& b = checked_cast<const arrow::Int64Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    case arrow::Type::UINT8: {
-      auto& a = checked_cast<const arrow::UInt8Array&>(*left);
-      auto& b = checked_cast<const arrow::UInt8Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    case arrow::Type::UINT16: {
-      auto& a = checked_cast<const arrow::UInt16Array&>(*left);
-      auto& b = checked_cast<const arrow::UInt16Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    case arrow::Type::UINT32: {
-      auto& a = checked_cast<const arrow::UInt32Array&>(*left);
-      auto& b = checked_cast<const arrow::UInt32Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    case arrow::Type::UINT64: {
-      auto& a = checked_cast<const arrow::UInt64Array&>(*left);
-      auto& b = checked_cast<const arrow::UInt64Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    case arrow::Type::DATE32: {
-      auto& a = checked_cast<const arrow::Date32Array&>(*left);
-      auto& b = checked_cast<const arrow::Date32Array&>(*right);
-      return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
-    }
-    default:
-      return 0;
+  case arrow::Type::INT8: {
+    auto& a = checked_cast<const arrow::Int8Array&>(*left);
+    auto& b = checked_cast<const arrow::Int8Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  case arrow::Type::INT16: {
+    auto& a = checked_cast<const arrow::Int16Array&>(*left);
+    auto& b = checked_cast<const arrow::Int16Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  case arrow::Type::INT32: {
+    auto& a = checked_cast<const arrow::Int32Array&>(*left);
+    auto& b = checked_cast<const arrow::Int32Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  case arrow::Type::INT64: {
+    auto& a = checked_cast<const arrow::Int64Array&>(*left);
+    auto& b = checked_cast<const arrow::Int64Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  case arrow::Type::UINT8: {
+    auto& a = checked_cast<const arrow::UInt8Array&>(*left);
+    auto& b = checked_cast<const arrow::UInt8Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  case arrow::Type::UINT16: {
+    auto& a = checked_cast<const arrow::UInt16Array&>(*left);
+    auto& b = checked_cast<const arrow::UInt16Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  case arrow::Type::UINT32: {
+    auto& a = checked_cast<const arrow::UInt32Array&>(*left);
+    auto& b = checked_cast<const arrow::UInt32Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  case arrow::Type::UINT64: {
+    auto& a = checked_cast<const arrow::UInt64Array&>(*left);
+    auto& b = checked_cast<const arrow::UInt64Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  case arrow::Type::DATE32: {
+    auto& a = checked_cast<const arrow::Date32Array&>(*left);
+    auto& b = checked_cast<const arrow::Date32Array&>(*right);
+    return a.Value(i) < b.Value(j) ? -1 : (a.Value(i) > b.Value(j) ? 1 : 0);
+  }
+  default:
+    return 0;
   }
 }
 
@@ -169,7 +185,8 @@ int CompareFloating(const std::shared_ptr<arrow::Array>& left, int64_t i,
   const bool a_nan = std::isnan(a);
   const bool b_nan = std::isnan(b);
   if (a_nan || b_nan) {
-    if (a_nan && b_nan) return 0;
+    if (a_nan && b_nan)
+      return 0;
     return a_nan ? 1 : -1;
   }
   return a < b ? -1 : (a > b ? 1 : 0);
@@ -179,144 +196,144 @@ int CompareArrayValues(const std::shared_ptr<arrow::Array>& left, int64_t i,
                        const std::shared_ptr<arrow::Array>& right, int64_t j,
                        const std::shared_ptr<arrow::DataType>& type) {
   switch (type->id()) {
-    case arrow::Type::BOOL: {
-      auto& a = checked_cast<const arrow::BooleanArray&>(*left);
-      auto& b = checked_cast<const arrow::BooleanArray&>(*right);
-      return a.Value(i) == b.Value(j) ? 0 : (a.Value(i) ? 1 : -1);
-    }
-    case arrow::Type::FLOAT:
-    case arrow::Type::DOUBLE:
-      return CompareFloating(left, i, right, j, type);
-    case arrow::Type::STRING: {
-      auto& a = checked_cast<const arrow::StringArray&>(*left);
-      auto& b = checked_cast<const arrow::StringArray&>(*right);
-      return a.GetView(i).compare(b.GetView(j));
-    }
-    case arrow::Type::LARGE_STRING: {
-      auto& a = checked_cast<const arrow::LargeStringArray&>(*left);
-      auto& b = checked_cast<const arrow::LargeStringArray&>(*right);
-      return a.GetView(i).compare(b.GetView(j));
-    }
-    case arrow::Type::BINARY: {
-      auto& a = checked_cast<const arrow::BinaryArray&>(*left);
-      auto& b = checked_cast<const arrow::BinaryArray&>(*right);
-      return a.GetView(i).compare(b.GetView(j));
-    }
-    default:
-      return CompareNumeric(left, i, right, j, type);
+  case arrow::Type::BOOL: {
+    auto& a = checked_cast<const arrow::BooleanArray&>(*left);
+    auto& b = checked_cast<const arrow::BooleanArray&>(*right);
+    return a.Value(i) == b.Value(j) ? 0 : (a.Value(i) ? 1 : -1);
+  }
+  case arrow::Type::FLOAT:
+  case arrow::Type::DOUBLE:
+    return CompareFloating(left, i, right, j, type);
+  case arrow::Type::STRING: {
+    auto& a = checked_cast<const arrow::StringArray&>(*left);
+    auto& b = checked_cast<const arrow::StringArray&>(*right);
+    return a.GetView(i).compare(b.GetView(j));
+  }
+  case arrow::Type::LARGE_STRING: {
+    auto& a = checked_cast<const arrow::LargeStringArray&>(*left);
+    auto& b = checked_cast<const arrow::LargeStringArray&>(*right);
+    return a.GetView(i).compare(b.GetView(j));
+  }
+  case arrow::Type::BINARY: {
+    auto& a = checked_cast<const arrow::BinaryArray&>(*left);
+    auto& b = checked_cast<const arrow::BinaryArray&>(*right);
+    return a.GetView(i).compare(b.GetView(j));
+  }
+  default:
+    return CompareNumeric(left, i, right, j, type);
   }
 }
 
 bool IsSortableType(const arrow::DataType& type) {
   switch (type.id()) {
-    case arrow::Type::BOOL:
-    case arrow::Type::INT8:
-    case arrow::Type::INT16:
-    case arrow::Type::INT32:
-    case arrow::Type::INT64:
-    case arrow::Type::UINT8:
-    case arrow::Type::UINT16:
-    case arrow::Type::UINT32:
-    case arrow::Type::UINT64:
-    case arrow::Type::FLOAT:
-    case arrow::Type::DOUBLE:
-    case arrow::Type::STRING:
-    case arrow::Type::LARGE_STRING:
-    case arrow::Type::BINARY:
-    case arrow::Type::DATE32:
-      return true;
-    default:
-      return false;
+  case arrow::Type::BOOL:
+  case arrow::Type::INT8:
+  case arrow::Type::INT16:
+  case arrow::Type::INT32:
+  case arrow::Type::INT64:
+  case arrow::Type::UINT8:
+  case arrow::Type::UINT16:
+  case arrow::Type::UINT32:
+  case arrow::Type::UINT64:
+  case arrow::Type::FLOAT:
+  case arrow::Type::DOUBLE:
+  case arrow::Type::STRING:
+  case arrow::Type::LARGE_STRING:
+  case arrow::Type::BINARY:
+  case arrow::Type::DATE32:
+    return true;
+  default:
+    return false;
   }
 }
 
 arrow::Result<int64_t> ScalarAsInt64(const std::shared_ptr<arrow::Scalar>& scalar) {
   switch (scalar->type->id()) {
-    case arrow::Type::INT8:
-      return checked_cast<const arrow::Int8Scalar&>(*scalar).value;
-    case arrow::Type::INT16:
-      return checked_cast<const arrow::Int16Scalar&>(*scalar).value;
-    case arrow::Type::INT32:
-      return checked_cast<const arrow::Int32Scalar&>(*scalar).value;
-    case arrow::Type::INT64:
-      return checked_cast<const arrow::Int64Scalar&>(*scalar).value;
-    case arrow::Type::UINT8:
-      return checked_cast<const arrow::UInt8Scalar&>(*scalar).value;
-    case arrow::Type::UINT16:
-      return checked_cast<const arrow::UInt16Scalar&>(*scalar).value;
-    case arrow::Type::UINT32:
-      return checked_cast<const arrow::UInt32Scalar&>(*scalar).value;
-    case arrow::Type::UINT64:
-      return static_cast<int64_t>(checked_cast<const arrow::UInt64Scalar&>(*scalar).value);
-    default:
-      return arrow::Status::Invalid("aggregate requires an integer column");
+  case arrow::Type::INT8:
+    return checked_cast<const arrow::Int8Scalar&>(*scalar).value;
+  case arrow::Type::INT16:
+    return checked_cast<const arrow::Int16Scalar&>(*scalar).value;
+  case arrow::Type::INT32:
+    return checked_cast<const arrow::Int32Scalar&>(*scalar).value;
+  case arrow::Type::INT64:
+    return checked_cast<const arrow::Int64Scalar&>(*scalar).value;
+  case arrow::Type::UINT8:
+    return checked_cast<const arrow::UInt8Scalar&>(*scalar).value;
+  case arrow::Type::UINT16:
+    return checked_cast<const arrow::UInt16Scalar&>(*scalar).value;
+  case arrow::Type::UINT32:
+    return checked_cast<const arrow::UInt32Scalar&>(*scalar).value;
+  case arrow::Type::UINT64:
+    return static_cast<int64_t>(checked_cast<const arrow::UInt64Scalar&>(*scalar).value);
+  default:
+    return arrow::Status::Invalid("aggregate requires an integer column");
   }
 }
 
 arrow::Result<double> ScalarAsDouble(const std::shared_ptr<arrow::Scalar>& scalar) {
   switch (scalar->type->id()) {
-    case arrow::Type::INT8:
-    case arrow::Type::INT16:
-    case arrow::Type::INT32:
-    case arrow::Type::INT64:
-    case arrow::Type::UINT8:
-    case arrow::Type::UINT16:
-    case arrow::Type::UINT32:
-    case arrow::Type::UINT64: {
-      ARROW_ASSIGN_OR_RAISE(auto value, ScalarAsInt64(scalar));
-      return static_cast<double>(value);
-    }
-    case arrow::Type::FLOAT:
-      return checked_cast<const arrow::FloatScalar&>(*scalar).value;
-    case arrow::Type::DOUBLE:
-      return checked_cast<const arrow::DoubleScalar&>(*scalar).value;
-    default:
-      return arrow::Status::Invalid("aggregate requires a numeric column");
+  case arrow::Type::INT8:
+  case arrow::Type::INT16:
+  case arrow::Type::INT32:
+  case arrow::Type::INT64:
+  case arrow::Type::UINT8:
+  case arrow::Type::UINT16:
+  case arrow::Type::UINT32:
+  case arrow::Type::UINT64: {
+    ARROW_ASSIGN_OR_RAISE(auto value, ScalarAsInt64(scalar));
+    return static_cast<double>(value);
+  }
+  case arrow::Type::FLOAT:
+    return checked_cast<const arrow::FloatScalar&>(*scalar).value;
+  case arrow::Type::DOUBLE:
+    return checked_cast<const arrow::DoubleScalar&>(*scalar).value;
+  default:
+    return arrow::Status::Invalid("aggregate requires a numeric column");
   }
 }
 
 arrow::Result<int64_t> ArrayAsInt64(const arrow::Array& array, int64_t row) {
   switch (array.type_id()) {
-    case arrow::Type::INT8:
-      return checked_cast<const arrow::Int8Array&>(array).Value(row);
-    case arrow::Type::INT16:
-      return checked_cast<const arrow::Int16Array&>(array).Value(row);
-    case arrow::Type::INT32:
-      return checked_cast<const arrow::Int32Array&>(array).Value(row);
-    case arrow::Type::INT64:
-      return checked_cast<const arrow::Int64Array&>(array).Value(row);
-    case arrow::Type::UINT8:
-      return checked_cast<const arrow::UInt8Array&>(array).Value(row);
-    case arrow::Type::UINT16:
-      return checked_cast<const arrow::UInt16Array&>(array).Value(row);
-    case arrow::Type::UINT32:
-      return checked_cast<const arrow::UInt32Array&>(array).Value(row);
-    case arrow::Type::UINT64:
-      return static_cast<int64_t>(checked_cast<const arrow::UInt64Array&>(array).Value(row));
-    default:
-      return arrow::Status::Invalid("aggregate requires an integer column");
+  case arrow::Type::INT8:
+    return checked_cast<const arrow::Int8Array&>(array).Value(row);
+  case arrow::Type::INT16:
+    return checked_cast<const arrow::Int16Array&>(array).Value(row);
+  case arrow::Type::INT32:
+    return checked_cast<const arrow::Int32Array&>(array).Value(row);
+  case arrow::Type::INT64:
+    return checked_cast<const arrow::Int64Array&>(array).Value(row);
+  case arrow::Type::UINT8:
+    return checked_cast<const arrow::UInt8Array&>(array).Value(row);
+  case arrow::Type::UINT16:
+    return checked_cast<const arrow::UInt16Array&>(array).Value(row);
+  case arrow::Type::UINT32:
+    return checked_cast<const arrow::UInt32Array&>(array).Value(row);
+  case arrow::Type::UINT64:
+    return static_cast<int64_t>(checked_cast<const arrow::UInt64Array&>(array).Value(row));
+  default:
+    return arrow::Status::Invalid("aggregate requires an integer column");
   }
 }
 
 arrow::Result<double> ArrayAsDouble(const arrow::Array& array, int64_t row) {
   switch (array.type_id()) {
-    case arrow::Type::FLOAT:
-      return checked_cast<const arrow::FloatArray&>(array).Value(row);
-    case arrow::Type::DOUBLE:
-      return checked_cast<const arrow::DoubleArray&>(array).Value(row);
-    case arrow::Type::INT8:
-    case arrow::Type::INT16:
-    case arrow::Type::INT32:
-    case arrow::Type::INT64:
-    case arrow::Type::UINT8:
-    case arrow::Type::UINT16:
-    case arrow::Type::UINT32:
-    case arrow::Type::UINT64: {
-      ARROW_ASSIGN_OR_RAISE(auto value, ArrayAsInt64(array, row));
-      return static_cast<double>(value);
-    }
-    default:
-      return arrow::Status::Invalid("aggregate requires a numeric column");
+  case arrow::Type::FLOAT:
+    return checked_cast<const arrow::FloatArray&>(array).Value(row);
+  case arrow::Type::DOUBLE:
+    return checked_cast<const arrow::DoubleArray&>(array).Value(row);
+  case arrow::Type::INT8:
+  case arrow::Type::INT16:
+  case arrow::Type::INT32:
+  case arrow::Type::INT64:
+  case arrow::Type::UINT8:
+  case arrow::Type::UINT16:
+  case arrow::Type::UINT32:
+  case arrow::Type::UINT64: {
+    ARROW_ASSIGN_OR_RAISE(auto value, ArrayAsInt64(array, row));
+    return static_cast<double>(value);
+  }
+  default:
+    return arrow::Status::Invalid("aggregate requires a numeric column");
   }
 }
 
@@ -382,47 +399,47 @@ arrow::Result<int> CompareArrayToScalar(const arrow::Array& array, int64_t row,
 
 bool IsIntegerKeyType(const arrow::DataType& type) {
   switch (type.id()) {
-    case arrow::Type::INT8:
-    case arrow::Type::INT16:
-    case arrow::Type::INT32:
-    case arrow::Type::INT64:
-    case arrow::Type::UINT8:
-    case arrow::Type::UINT16:
-    case arrow::Type::UINT32:
-    case arrow::Type::UINT64:
-    case arrow::Type::DATE32:
-      return true;
-    default:
-      return false;
+  case arrow::Type::INT8:
+  case arrow::Type::INT16:
+  case arrow::Type::INT32:
+  case arrow::Type::INT64:
+  case arrow::Type::UINT8:
+  case arrow::Type::UINT16:
+  case arrow::Type::UINT32:
+  case arrow::Type::UINT64:
+  case arrow::Type::DATE32:
+    return true;
+  default:
+    return false;
   }
 }
 
 uint64_t IntegerKeyAt(const arrow::Array& array, int64_t row) {
   switch (array.type_id()) {
-    case arrow::Type::INT8:
-      return static_cast<uint64_t>(
-          static_cast<int64_t>(checked_cast<const arrow::Int8Array&>(array).Value(row)));
-    case arrow::Type::INT16:
-      return static_cast<uint64_t>(
-          static_cast<int64_t>(checked_cast<const arrow::Int16Array&>(array).Value(row)));
-    case arrow::Type::INT32:
-      return static_cast<uint64_t>(
-          static_cast<int64_t>(checked_cast<const arrow::Int32Array&>(array).Value(row)));
-    case arrow::Type::INT64:
-      return static_cast<uint64_t>(checked_cast<const arrow::Int64Array&>(array).Value(row));
-    case arrow::Type::UINT8:
-      return checked_cast<const arrow::UInt8Array&>(array).Value(row);
-    case arrow::Type::UINT16:
-      return checked_cast<const arrow::UInt16Array&>(array).Value(row);
-    case arrow::Type::UINT32:
-      return checked_cast<const arrow::UInt32Array&>(array).Value(row);
-    case arrow::Type::UINT64:
-      return checked_cast<const arrow::UInt64Array&>(array).Value(row);
-    case arrow::Type::DATE32:
-      return static_cast<uint64_t>(
-          static_cast<int64_t>(checked_cast<const arrow::Date32Array&>(array).Value(row)));
-    default:
-      return 0;
+  case arrow::Type::INT8:
+    return static_cast<uint64_t>(
+        static_cast<int64_t>(checked_cast<const arrow::Int8Array&>(array).Value(row)));
+  case arrow::Type::INT16:
+    return static_cast<uint64_t>(
+        static_cast<int64_t>(checked_cast<const arrow::Int16Array&>(array).Value(row)));
+  case arrow::Type::INT32:
+    return static_cast<uint64_t>(
+        static_cast<int64_t>(checked_cast<const arrow::Int32Array&>(array).Value(row)));
+  case arrow::Type::INT64:
+    return static_cast<uint64_t>(checked_cast<const arrow::Int64Array&>(array).Value(row));
+  case arrow::Type::UINT8:
+    return checked_cast<const arrow::UInt8Array&>(array).Value(row);
+  case arrow::Type::UINT16:
+    return checked_cast<const arrow::UInt16Array&>(array).Value(row);
+  case arrow::Type::UINT32:
+    return checked_cast<const arrow::UInt32Array&>(array).Value(row);
+  case arrow::Type::UINT64:
+    return checked_cast<const arrow::UInt64Array&>(array).Value(row);
+  case arrow::Type::DATE32:
+    return static_cast<uint64_t>(
+        static_cast<int64_t>(checked_cast<const arrow::Date32Array&>(array).Value(row)));
+  default:
+    return 0;
   }
 }
 
@@ -433,10 +450,9 @@ uint64_t MixKey(uint64_t value) {
   return value ^ (value >> 31);
 }
 
-}  // namespace
+} // namespace
 
-std::shared_ptr<arrow::RecordBatch> MakeEmptyBatch(
-    const std::shared_ptr<arrow::Schema>& schema) {
+std::shared_ptr<arrow::RecordBatch> MakeEmptyBatch(const std::shared_ptr<arrow::Schema>& schema) {
   return MakeEmptyBatchImpl(schema);
 }
 
@@ -446,14 +462,10 @@ std::shared_ptr<arrow::RecordBatch> MakeEmptyBatch(
 
 ScanOperator::ScanOperator(std::shared_ptr<ParquetSource> source,
                            std::vector<std::string> file_columns,
-                           std::vector<std::string> output_names,
-                           std::vector<sql::ExprPtr> filters, int64_t batch_size,
-                           std::shared_ptr<ExecutionStats> stats)
-    : source_(std::move(source)),
-      file_columns_(std::move(file_columns)),
-      output_names_(std::move(output_names)),
-      filters_(std::move(filters)),
-      batch_size_(batch_size),
+                           std::vector<std::string> output_names, std::vector<sql::ExprPtr> filters,
+                           int64_t batch_size, std::shared_ptr<ExecutionStats> stats)
+    : source_(std::move(source)), file_columns_(std::move(file_columns)),
+      output_names_(std::move(output_names)), filters_(std::move(filters)), batch_size_(batch_size),
       stats_(std::move(stats)) {
   if (file_columns_.size() != output_names_.size()) {
     init_status_ = arrow::Status::Invalid("scan column/name count mismatch");
@@ -467,8 +479,8 @@ ScanOperator::ScanOperator(std::shared_ptr<ParquetSource> source,
       return;
     }
     column_indices_.push_back(index.ValueOrDie());
-    fields.push_back(arrow::field(output_names_[i],
-                                  source_->schema()->field(index.ValueOrDie())->type()));
+    fields.push_back(
+        arrow::field(output_names_[i], source_->schema()->field(index.ValueOrDie())->type()));
   }
   schema_ = arrow::schema(std::move(fields));
 }
@@ -507,24 +519,26 @@ arrow::Status ScanOperator::Initialize() {
     stats_->rows_from_metadata += metadata_rows_;
     return arrow::Status::OK();
   }
-  ARROW_ASSIGN_OR_RAISE(reader_,
-                         source_->OpenReader(row_groups_, column_indices_, batch_size_));
+  ARROW_ASSIGN_OR_RAISE(reader_, source_->OpenReader(row_groups_, column_indices_, batch_size_));
   return arrow::Status::OK();
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> ScanOperator::Next() {
-  if (!init_status_.ok()) return init_status_;
+  if (!init_status_.ok())
+    return init_status_;
   if (!initialized_) {
     ARROW_RETURN_NOT_OK(Initialize());
   }
-  if (done_) return nullptr;
+  if (done_)
+    return nullptr;
   if (metadata_only_) {
     done_ = true;
-    if (metadata_rows_ <= 0) return nullptr;
+    if (metadata_rows_ <= 0)
+      return nullptr;
     // A zero-column batch with a row count is valid Arrow and lets the
     // aggregate operator use its count-only fast path.
-    return arrow::RecordBatch::Make(
-        schema_, metadata_rows_, std::vector<std::shared_ptr<arrow::Array>>{});
+    return arrow::RecordBatch::Make(schema_, metadata_rows_,
+                                    std::vector<std::shared_ptr<arrow::Array>>{});
   }
 
   while (true) {
@@ -539,10 +553,12 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> ScanOperator::Next() {
     auto renamed = arrow::RecordBatch::Make(schema_, batch->num_rows(), batch->columns());
     for (const auto& filter : filters_) {
       ARROW_ASSIGN_OR_RAISE(renamed, ApplyFilter(*renamed, *filter));
-      if (renamed->num_rows() == 0) break;
+      if (renamed->num_rows() == 0)
+        break;
     }
     stats_->rows_after_pushdown += renamed->num_rows();
-    if (renamed->num_rows() > 0) return renamed;
+    if (renamed->num_rows() > 0)
+      return renamed;
   }
 }
 
@@ -553,22 +569,26 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> ScanOperator::Next() {
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> FilterOperator::Next() {
   while (true) {
     ARROW_ASSIGN_OR_RAISE(auto batch, child_->Next());
-    if (!batch) return nullptr;
+    if (!batch)
+      return nullptr;
     ARROW_ASSIGN_OR_RAISE(auto filtered, ApplyFilter(*batch, *predicate_));
-    if (filtered->num_rows() > 0) return filtered;
+    if (filtered->num_rows() > 0)
+      return filtered;
   }
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> ProjectOperator::Next() {
   ARROW_ASSIGN_OR_RAISE(auto batch, child_->Next());
-  if (!batch) return nullptr;
+  if (!batch)
+    return nullptr;
   return ApplyProjection(*batch, projections_, output_names_);
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> LimitOperator::Next() {
   while (true) {
     ARROW_ASSIGN_OR_RAISE(auto batch, child_->Next());
-    if (!batch) return nullptr;
+    if (!batch)
+      return nullptr;
     if (offset_remaining_ > 0) {
       if (batch->num_rows() <= offset_remaining_) {
         offset_remaining_ -= batch->num_rows();
@@ -577,8 +597,10 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> LimitOperator::Next() {
       batch = batch->Slice(offset_remaining_, batch->num_rows() - offset_remaining_);
       offset_remaining_ = 0;
     }
-    if (remaining_ < 0) return batch;
-    if (remaining_ == 0) return nullptr;
+    if (remaining_ < 0)
+      return batch;
+    if (remaining_ == 0)
+      return nullptr;
     if (batch->num_rows() <= remaining_) {
       remaining_ -= batch->num_rows();
       return batch;
@@ -594,7 +616,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> LimitOperator::Next() {
 // ---------------------------------------------------------------------------
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DistinctOperator::Next() {
-  if (done_) return nullptr;
+  if (done_)
+    return nullptr;
   done_ = true;
   ARROW_ASSIGN_OR_RAISE(auto batch, MaterializeOperator(*child_));
   if (batch->num_rows() <= 1) {
@@ -613,7 +636,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DistinctOperator::Next() {
     for (int column = 0; column < batch->num_columns(); ++column) {
       ARROW_RETURN_NOT_OK(AppendArrayKey(*batch->column(column), row, key));
     }
-    if (seen.insert(key).second) indices.push_back(row);
+    if (seen.insert(key).second)
+      indices.push_back(row);
   }
   if (indices.size() == static_cast<size_t>(batch->num_rows())) {
     result_ = std::move(batch);
@@ -622,14 +646,14 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DistinctOperator::Next() {
 
   arrow::Int64Builder builder;
   ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(indices.size())));
-  for (int64_t index : indices) builder.UnsafeAppend(index);
+  for (int64_t index : indices)
+    builder.UnsafeAppend(index);
   ARROW_ASSIGN_OR_RAISE(auto index_array, builder.Finish());
 
   std::vector<std::shared_ptr<arrow::Array>> columns;
   columns.reserve(batch->num_columns());
   for (int column = 0; column < batch->num_columns(); ++column) {
-    ARROW_ASSIGN_OR_RAISE(auto taken,
-                           arrow::compute::Take(*batch->column(column), *index_array));
+    ARROW_ASSIGN_OR_RAISE(auto taken, arrow::compute::Take(*batch->column(column), *index_array));
     columns.push_back(std::move(taken));
   }
   result_ = arrow::RecordBatch::Make(batch->schema(), static_cast<int64_t>(indices.size()),
@@ -643,7 +667,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DistinctOperator::Next() {
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> SortOperator::Materialize() {
   ARROW_ASSIGN_OR_RAISE(auto batch, MaterializeOperator(*child_));
-  if (batch->num_rows() <= 1) return batch;
+  if (batch->num_rows() <= 1)
+    return batch;
 
   std::vector<std::shared_ptr<arrow::Array>> keys;
   keys.reserve(sort_keys_.size());
@@ -666,11 +691,13 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> SortOperator::Materialize() {
       const bool left_null = !keys[k]->IsValid(i);
       const bool right_null = !keys[k]->IsValid(j);
       if (left_null || right_null) {
-        if (left_null && right_null) continue;
-        return left_null ? false : true;  // NULLs last, like DuckDB
+        if (left_null && right_null)
+          continue;
+        return left_null ? false : true; // NULLs last, like DuckDB
       }
       int cmp = CompareArrayValues(keys[k], i, keys[k], j, keys[k]->type());
-      if (cmp != 0) return sort_keys_[k].descending ? cmp > 0 : cmp < 0;
+      if (cmp != 0)
+        return sort_keys_[k].descending ? cmp > 0 : cmp < 0;
     }
     // Stable order for ties. This also makes nth_element deterministic below.
     return i < j;
@@ -693,7 +720,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> SortOperator::Materialize() {
 
   arrow::Int64Builder builder;
   ARROW_RETURN_NOT_OK(builder.Reserve(output_rows));
-  for (int64_t index : indices) builder.UnsafeAppend(index);
+  for (int64_t index : indices)
+    builder.UnsafeAppend(index);
   ARROW_ASSIGN_OR_RAISE(auto index_array, builder.Finish());
 
   std::vector<std::shared_ptr<arrow::Array>> columns;
@@ -706,7 +734,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> SortOperator::Materialize() {
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> SortOperator::Next() {
-  if (done_) return nullptr;
+  if (done_)
+    return nullptr;
   done_ = true;
   ARROW_ASSIGN_OR_RAISE(result_, Materialize());
   return result_;
@@ -716,9 +745,9 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> SortOperator::Next() {
 // Aggregate
 // ---------------------------------------------------------------------------
 
-arrow::Status AggregateOperator::UpdateGroup(
-    Group& group, int64_t row,
-    const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays) {
+arrow::Status
+AggregateOperator::UpdateGroup(Group& group, int64_t row,
+                               const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays) {
   for (size_t i = 0; i < aggregates_.size(); ++i) {
     const auto& aggregate = *aggregates_[i];
     AggState& state = group.states[i];
@@ -727,7 +756,8 @@ arrow::Status AggregateOperator::UpdateGroup(
       continue;
     }
     const auto& arguments = *argument_arrays[i];
-    if (arguments.IsNull(row)) continue;
+    if (arguments.IsNull(row))
+      continue;
 
     if (aggregate.function == "count") {
       ++state.count;
@@ -750,8 +780,7 @@ arrow::Status AggregateOperator::UpdateGroup(
         ARROW_ASSIGN_OR_RAISE(state.extreme, arguments.GetScalar(row));
         state.has_value = true;
       } else {
-        ARROW_ASSIGN_OR_RAISE(int cmp,
-                               CompareArrayToScalar(arguments, row, *state.extreme));
+        ARROW_ASSIGN_OR_RAISE(int cmp, CompareArrayToScalar(arguments, row, *state.extreme));
         const bool better = aggregate.function == "min" ? cmp < 0 : cmp > 0;
         if (better) {
           ARROW_ASSIGN_OR_RAISE(state.extreme, arguments.GetScalar(row));
@@ -769,9 +798,11 @@ void AggregateOperator::FlatGrow() {
   flat_size_ = 0;
   const size_t mask = capacity - 1;
   for (const FlatSlot& slot : old) {
-    if (!slot.used) continue;
+    if (!slot.used)
+      continue;
     size_t index = MixKey(slot.key ^ (slot.is_null ? 0x9e3779b97f4a7c15ULL : 0)) & mask;
-    while (flat_slots_[index].used) index = (index + 1) & mask;
+    while (flat_slots_[index].used)
+      index = (index + 1) & mask;
     flat_slots_[index] = slot;
     ++flat_size_;
   }
@@ -784,8 +815,7 @@ size_t AggregateOperator::FlatFindOrInsert(uint64_t key, bool is_null, bool* ins
   const size_t mask = flat_slots_.size() - 1;
   size_t index = MixKey(key ^ (is_null ? 0x9e3779b97f4a7c15ULL : 0)) & mask;
   while (flat_slots_[index].used) {
-    if (flat_slots_[index].key == key &&
-        flat_slots_[index].is_null == (is_null ? 1 : 0)) {
+    if (flat_slots_[index].key == key && flat_slots_[index].is_null == (is_null ? 1 : 0)) {
       *inserted = false;
       return index;
     }
@@ -809,7 +839,8 @@ arrow::Status AggregateOperator::Consume(const std::shared_ptr<arrow::RecordBatc
       group.states.resize(aggregates_.size());
       groups_.push_back(std::move(group));
     }
-    for (auto& state : groups_[0].states) state.count += batch->num_rows();
+    for (auto& state : groups_[0].states)
+      state.count += batch->num_rows();
     return arrow::Status::OK();
   }
 
@@ -824,7 +855,7 @@ arrow::Status AggregateOperator::Consume(const std::shared_ptr<arrow::RecordBatc
   for (size_t i = 0; i < aggregates_.size(); ++i) {
     if (!aggregates_[i]->star) {
       ARROW_ASSIGN_OR_RAISE(argument_arrays[i],
-                             EvaluateExpressionArray(*aggregates_[i]->argument, *batch));
+                            EvaluateExpressionArray(*aggregates_[i]->argument, *batch));
     }
   }
 
@@ -907,7 +938,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::BuildResul
     group.states.resize(aggregates_.size());
     groups_.push_back(std::move(group));
   }
-  if (groups_.empty()) return MakeEmptyBatchImpl(output_schema_);
+  if (groups_.empty())
+    return MakeEmptyBatchImpl(output_schema_);
 
   std::vector<std::shared_ptr<arrow::Array>> columns;
   columns.reserve(group_by_.size() + aggregates_.size());
@@ -915,9 +947,9 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::BuildResul
   for (size_t i = 0; i < group_by_.size(); ++i) {
     ARROW_ASSIGN_OR_RAISE(auto name, ResolveColumnName(*child_->schema(), *group_by_[i]));
     int index = child_->schema()->GetFieldIndex(name);
-    if (index < 0) return arrow::Status::Invalid("group column not found");
-    ARROW_ASSIGN_OR_RAISE(auto builder,
-                           arrow::MakeBuilder(child_->schema()->field(index)->type()));
+    if (index < 0)
+      return arrow::Status::Invalid("group column not found");
+    ARROW_ASSIGN_OR_RAISE(auto builder, arrow::MakeBuilder(child_->schema()->field(index)->type()));
     for (const auto& group : groups_) {
       ARROW_RETURN_NOT_OK(builder->AppendScalar(*group.keys[i]));
     }
@@ -946,8 +978,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::BuildResul
     for (const auto& group : groups_) {
       const AggState& state = group.states[i];
       if (aggregate.function == "count") {
-        ARROW_RETURN_NOT_OK(
-            checked_cast<arrow::Int64Builder&>(*builder).Append(state.count));
+        ARROW_RETURN_NOT_OK(checked_cast<arrow::Int64Builder&>(*builder).Append(state.count));
       } else if (aggregate.function == "sum") {
         if (!state.has_value) {
           ARROW_RETURN_NOT_OK(builder->AppendNull());
@@ -959,15 +990,15 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::BuildResul
               state.int_sum > std::numeric_limits<int64_t>::max()) {
             return arrow::Status::Invalid("SUM overflowed the int64 range");
           }
-          ARROW_RETURN_NOT_OK(checked_cast<arrow::Int64Builder&>(*builder)
-                                  .Append(static_cast<int64_t>(state.int_sum)));
+          ARROW_RETURN_NOT_OK(checked_cast<arrow::Int64Builder&>(*builder).Append(
+              static_cast<int64_t>(state.int_sum)));
         }
       } else if (aggregate.function == "avg") {
         if (state.count == 0) {
           ARROW_RETURN_NOT_OK(builder->AppendNull());
         } else {
-          ARROW_RETURN_NOT_OK(checked_cast<arrow::DoubleBuilder&>(*builder)
-                                  .Append(state.double_sum / static_cast<double>(state.count)));
+          ARROW_RETURN_NOT_OK(checked_cast<arrow::DoubleBuilder&>(*builder).Append(
+              state.double_sum / static_cast<double>(state.count)));
         }
       } else if (aggregate.function == "min" || aggregate.function == "max") {
         if (!state.has_value) {
@@ -986,12 +1017,14 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::BuildResul
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::Next() {
-  if (done_) return nullptr;
+  if (done_)
+    return nullptr;
   done_ = true;
 
   while (true) {
     ARROW_ASSIGN_OR_RAISE(auto batch, child_->Next());
-    if (!batch) break;
+    if (!batch)
+      break;
     ARROW_RETURN_NOT_OK(Consume(batch));
   }
   ARROW_ASSIGN_OR_RAISE(result_, BuildResult());
@@ -1003,18 +1036,16 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::Next() {
 // ---------------------------------------------------------------------------
 
 JoinOperator::JoinOperator(std::shared_ptr<Operator> left, std::shared_ptr<Operator> right,
-                           std::vector<JoinCondition> conditions, bool build_left,
-                           bool left_outer)
-    : left_(std::move(left)),
-      right_(std::move(right)),
-      conditions_(std::move(conditions)),
-      build_left_(left_outer ? false : build_left),
-      left_outer_(left_outer) {
+                           std::vector<JoinCondition> conditions, bool build_left, bool left_outer)
+    : left_(std::move(left)), right_(std::move(right)), conditions_(std::move(conditions)),
+      build_left_(left_outer ? false : build_left), left_outer_(left_outer) {
   left_schema_ = left_->schema();
   right_schema_ = right_->schema();
   std::vector<std::shared_ptr<arrow::Field>> fields;
-  for (int i = 0; i < left_schema_->num_fields(); ++i) fields.push_back(left_schema_->field(i));
-  for (int i = 0; i < right_schema_->num_fields(); ++i) fields.push_back(right_schema_->field(i));
+  for (int i = 0; i < left_schema_->num_fields(); ++i)
+    fields.push_back(left_schema_->field(i));
+  for (int i = 0; i < right_schema_->num_fields(); ++i)
+    fields.push_back(right_schema_->field(i));
   output_schema_ = arrow::schema(std::move(fields));
 }
 
@@ -1041,15 +1072,16 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Build() {
       ARROW_RETURN_NOT_OK(AppendArrayKey(*array, row, key));
     }
     // SQL equality never matches NULL, unlike grouping where NULL is a group.
-    if (has_null) continue;
+    if (has_null)
+      continue;
     hash_[key].push_back(row);
   }
   return build_batch_;
 }
 
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Probe(
-    const std::shared_ptr<arrow::RecordBatch>& probe_batch,
-    const std::vector<std::shared_ptr<arrow::Array>>& probe_keys) {
+arrow::Result<std::shared_ptr<arrow::RecordBatch>>
+JoinOperator::Probe(const std::shared_ptr<arrow::RecordBatch>& probe_batch,
+                    const std::vector<std::shared_ptr<arrow::Array>>& probe_keys) {
   arrow::Int64Builder probe_indices;
   arrow::Int64Builder build_indices;
   for (int64_t row = 0; row < probe_batch->num_rows(); ++row) {
@@ -1063,9 +1095,11 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Probe(
       }
       ARROW_RETURN_NOT_OK(AppendArrayKey(*array, row, key));
     }
-    if (has_null) continue;
+    if (has_null)
+      continue;
     auto found = hash_.find(key);
-    if (found == hash_.end()) continue;
+    if (found == hash_.end())
+      continue;
     for (int64_t build_row : found->second) {
       ARROW_RETURN_NOT_OK(probe_indices.Append(row));
       ARROW_RETURN_NOT_OK(build_indices.Append(build_row));
@@ -1074,7 +1108,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Probe(
   ARROW_ASSIGN_OR_RAISE(auto probe_index_array, probe_indices.Finish());
   ARROW_ASSIGN_OR_RAISE(auto build_index_array, build_indices.Finish());
   const int64_t count = probe_index_array->length();
-  if (count == 0) return nullptr;
+  if (count == 0)
+    return nullptr;
 
   const auto& probe_batch_ref = probe_batch;
   const auto& build_batch_ref = build_batch_;
@@ -1086,13 +1121,12 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Probe(
   std::vector<std::shared_ptr<arrow::Array>> columns;
   columns.reserve(output_schema_->num_fields());
   for (int i = 0; i < left_schema_->num_fields(); ++i) {
-    ARROW_ASSIGN_OR_RAISE(auto taken,
-                           arrow::compute::Take(*left_batch->column(i), *left_indices));
+    ARROW_ASSIGN_OR_RAISE(auto taken, arrow::compute::Take(*left_batch->column(i), *left_indices));
     columns.push_back(std::move(taken));
   }
   for (int i = 0; i < right_schema_->num_fields(); ++i) {
     ARROW_ASSIGN_OR_RAISE(auto taken,
-                           arrow::compute::Take(*right_batch->column(i), *right_indices));
+                          arrow::compute::Take(*right_batch->column(i), *right_indices));
     columns.push_back(std::move(taken));
   }
   return arrow::RecordBatch::Make(output_schema_, count, std::move(columns));
@@ -1100,17 +1134,17 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Probe(
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::MaterializeLeftOuter() {
   ARROW_ASSIGN_OR_RAISE(auto left_batch, MaterializeOperator(*left_));
-  if (left_batch->num_rows() == 0) return MakeEmptyBatchImpl(output_schema_);
+  if (left_batch->num_rows() == 0)
+    return MakeEmptyBatchImpl(output_schema_);
 
   std::vector<std::shared_ptr<arrow::Array>> probe_keys;
   probe_keys.reserve(conditions_.size());
   for (size_t i = 0; i < conditions_.size(); ++i) {
-    ARROW_ASSIGN_OR_RAISE(auto key,
-                           EvaluateExpressionArray(*conditions_[i].left, *left_batch));
+    ARROW_ASSIGN_OR_RAISE(auto key, EvaluateExpressionArray(*conditions_[i].left, *left_batch));
     if (!key->type()->Equals(build_keys_[i]->type())) {
-      return arrow::Status::Invalid(
-          "join key types must match exactly; left is " + key->type()->ToString() +
-          ", right is " + build_keys_[i]->type()->ToString());
+      return arrow::Status::Invalid("join key types must match exactly; left is " +
+                                    key->type()->ToString() + ", right is " +
+                                    build_keys_[i]->type()->ToString());
     }
     probe_keys.push_back(std::move(key));
   }
@@ -1149,24 +1183,22 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::MaterializeLeft
   columns.reserve(output_schema_->num_fields());
   for (int i = 0; i < left_schema_->num_fields(); ++i) {
     ARROW_ASSIGN_OR_RAISE(auto taken,
-                           arrow::compute::Take(*left_batch->column(i), *left_index_array));
+                          arrow::compute::Take(*left_batch->column(i), *left_index_array));
     columns.push_back(std::move(taken));
   }
   for (int i = 0; i < right_schema_->num_fields(); ++i) {
-    ARROW_ASSIGN_OR_RAISE(
-        auto null_row, arrow::MakeArrayOfNull(right_schema_->field(i)->type(), 1));
-    ARROW_ASSIGN_OR_RAISE(
-        auto extended,
-        arrow::Concatenate({build_batch_->column(i), null_row}));
-    ARROW_ASSIGN_OR_RAISE(auto taken,
-                           arrow::compute::Take(*extended, *right_index_array));
+    ARROW_ASSIGN_OR_RAISE(auto null_row,
+                          arrow::MakeArrayOfNull(right_schema_->field(i)->type(), 1));
+    ARROW_ASSIGN_OR_RAISE(auto extended, arrow::Concatenate({build_batch_->column(i), null_row}));
+    ARROW_ASSIGN_OR_RAISE(auto taken, arrow::compute::Take(*extended, *right_index_array));
     columns.push_back(std::move(taken));
   }
   return arrow::RecordBatch::Make(output_schema_, count, std::move(columns));
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Next() {
-  if (done_) return nullptr;
+  if (done_)
+    return nullptr;
   if (!built_) {
     ARROW_RETURN_NOT_OK(Build());
   }
@@ -1189,16 +1221,17 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Next() {
       const auto& expr = build_left_ ? conditions_[i].right : conditions_[i].left;
       ARROW_ASSIGN_OR_RAISE(auto key, EvaluateExpressionArray(*expr, *probe_batch));
       if (!key->type()->Equals(build_keys_[i]->type())) {
-        return arrow::Status::Invalid(
-            "join key types must match exactly; left is " +
-            build_keys_[i]->type()->ToString() + ", right is " + key->type()->ToString());
+        return arrow::Status::Invalid("join key types must match exactly; left is " +
+                                      build_keys_[i]->type()->ToString() + ", right is " +
+                                      key->type()->ToString());
       }
       probe_keys.push_back(std::move(key));
     }
 
     ARROW_ASSIGN_OR_RAISE(auto result, Probe(probe_batch, probe_keys));
-    if (result && result->num_rows() > 0) return result;
+    if (result && result->num_rows() > 0)
+      return result;
   }
 }
 
-}  // namespace qe
+} // namespace qe

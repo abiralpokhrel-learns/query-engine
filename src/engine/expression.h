@@ -17,17 +17,17 @@ namespace qe {
 arrow::Result<arrow::Datum> EvaluateExpression(const sql::Expr& expr,
                                                const arrow::RecordBatch& batch);
 
-arrow::Result<std::shared_ptr<arrow::Array>> EvaluateExpressionArray(const sql::Expr& expr,
-                                                                     const arrow::RecordBatch& batch);
+arrow::Result<std::shared_ptr<arrow::Array>>
+EvaluateExpressionArray(const sql::Expr& expr, const arrow::RecordBatch& batch);
 
 // Evaluates a predicate and returns only rows where the predicate is TRUE.
 // NULL is treated as FALSE, as SQL WHERE requires.
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> ApplyFilter(
-    const arrow::RecordBatch& batch, const sql::Expr& predicate);
+arrow::Result<std::shared_ptr<arrow::RecordBatch>> ApplyFilter(const arrow::RecordBatch& batch,
+                                                               const sql::Expr& predicate);
 
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> ApplyProjection(
-    const arrow::RecordBatch& batch, const std::vector<sql::ExprPtr>& expressions,
-    const std::vector<std::string>& output_names);
+arrow::Result<std::shared_ptr<arrow::RecordBatch>>
+ApplyProjection(const arrow::RecordBatch& batch, const std::vector<sql::ExprPtr>& expressions,
+                const std::vector<std::string>& output_names);
 
 // Resolves a column reference against a batch schema. Field names are
 // internally qualified as "<table>.<column>".
@@ -39,6 +39,6 @@ std::string CanonicalExpression(const sql::Expr& expr);
 bool ExpressionsEqual(const sql::Expr& left, const sql::Expr& right);
 
 arrow::Result<std::shared_ptr<arrow::Scalar>> LiteralToScalar(const sql::Literal& literal,
-                                                             const arrow::DataType& type);
+                                                              const arrow::DataType& type);
 
-}  // namespace qe
+} // namespace qe

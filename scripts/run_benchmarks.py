@@ -18,7 +18,6 @@ import json
 import math
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -30,7 +29,7 @@ import numpy as np
 import pyarrow as pa
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "build" / "qe-cli"
+BINARY = Path(os.environ.get("QE_CLI", str(ROOT / "build" / "qe-cli")))
 RESULT_DIR = ROOT / "benchmarks" / "results"
 CHART_DIR = ROOT / "benchmarks" / "charts"
 VIEW_TABLES = ("sales", "customers")
@@ -69,8 +68,7 @@ QUERIES = [
         "id": "topk",
         "description": "Selective filter, top-k sort, then LIMIT.",
         "sql": (
-            "SELECT sale_id, amount FROM sales WHERE amount > 1000 "
-            "ORDER BY amount DESC LIMIT 100"
+            "SELECT sale_id, amount FROM sales WHERE amount > 1000 ORDER BY amount DESC LIMIT 100"
         ),
     },
     {
@@ -176,8 +174,9 @@ def get_environment() -> dict:
     }
 
 
-def ensure_data(data_dir: Path, rows: int, customers: int, products: int,
-                row_group_size: int, force: bool) -> dict:
+def ensure_data(
+    data_dir: Path, rows: int, customers: int, products: int, row_group_size: int, force: bool
+) -> dict:
     manifest_path = data_dir / "manifest.json"
     valid = False
     if not force and manifest_path.exists() and (data_dir / "sales.parquet").exists():
@@ -214,7 +213,7 @@ def ensure_data(data_dir: Path, rows: int, customers: int, products: int,
 def create_views(conn: duckdb.DuckDBPyConnection, data_dir: Path) -> None:
     for table in VIEW_TABLES:
         path = (data_dir / f"{table}.parquet").as_posix()
-        conn.execute(f'CREATE OR REPLACE VIEW "{table}" AS SELECT * FROM read_parquet(\'{path}\')')
+        conn.execute(f"CREATE OR REPLACE VIEW \"{table}\" AS SELECT * FROM read_parquet('{path}')")
 
 
 def qe_args(data_dir: Path, query: str, *extra: str) -> list[str]:
@@ -233,19 +232,17 @@ def run_qe(data_dir: Path, query: str, *extra: str) -> subprocess.CompletedProce
 
 
 def parse_timings(stderr: str) -> dict:
-    timing_line = next(
-        (line for line in stderr.splitlines() if line.startswith("timings:")), None
-    )
+    timing_line = next((line for line in stderr.splitlines() if line.startswith("timings:")), None)
     if not timing_line:
         raise RuntimeError(f"no timings line in qe-cli stderr:\n{stderr}")
     timings = {}
     for field in timing_line.removeprefix("timings:").strip().split():
         key, value = field.split("=", 1)
         timings[key] = float(value)
-    runs_line = next(
-        (line for line in stderr.splitlines() if line.startswith("runs_ms:")), None
+    runs_line = next((line for line in stderr.splitlines() if line.startswith("runs_ms:")), None)
+    runs = (
+        [float(value) for value in runs_line.removeprefix("runs_ms:").split()] if runs_line else []
     )
-    runs = [float(value) for value in runs_line.removeprefix("runs_ms:").split()] if runs_line else []
     return {"timings": timings, "runs_ms": runs}
 
 
@@ -298,8 +295,7 @@ def verify_query(conn: duckdb.DuckDBPyConnection, data_dir: Path, query: str) ->
     }
 
 
-def measure_qe(data_dir: Path, query: str, batch_size: int, repeats: int,
-               warmups: int) -> dict:
+def measure_qe(data_dir: Path, query: str, batch_size: int, repeats: int, warmups: int) -> dict:
     for _ in range(warmups):
         run_qe(data_dir, query, "--batch-size", str(batch_size), "--max-rows", "0")
     completed = run_qe(
@@ -328,8 +324,7 @@ def measure_qe(data_dir: Path, query: str, batch_size: int, repeats: int,
     }
 
 
-def measure_duckdb(conn: duckdb.DuckDBPyConnection, query: str, repeats: int,
-                   warmups: int) -> dict:
+def measure_duckdb(conn: duckdb.DuckDBPyConnection, query: str, repeats: int, warmups: int) -> dict:
     for _ in range(warmups):
         conn.execute(query).fetchall()
     runs = []
@@ -339,8 +334,9 @@ def measure_duckdb(conn: duckdb.DuckDBPyConnection, query: str, repeats: int,
         runs.append((time.perf_counter_ns() - start) / 1_000_000.0)
     return {
         "runs_ms": runs,
-        "median_ms": sorted(runs)[len(runs) // 2] if len(runs) % 2 else
-        (sorted(runs)[len(runs) // 2 - 1] + sorted(runs)[len(runs) // 2]) / 2.0,
+        "median_ms": sorted(runs)[len(runs) // 2]
+        if len(runs) % 2
+        else (sorted(runs)[len(runs) // 2 - 1] + sorted(runs)[len(runs) // 2]) / 2.0,
         "min_ms": min(runs),
         "max_ms": max(runs),
         "threads": conn.execute("SELECT current_setting('threads')").fetchone()[0],
@@ -403,9 +399,7 @@ def markdown_report(results: dict) -> str:
         duck = query["duckdb"]["median_ms"]
         ratio = cpu / duck if duck else float("inf")
         winner = "CPU" if cpu < duck else ("DuckDB" if duck < cpu else "tie")
-        lines.append(
-            f"| {query['id']} | {cpu:.2f} | {duck:.2f} | {ratio:.2f}x | {winner} |"
-        )
+        lines.append(f"| {query['id']} | {cpu:.2f} | {duck:.2f} | {ratio:.2f}x | {winner} |")
     lines += [
         "",
         f"CPU wins: **{results['summary']['cpu_wins']}**; "
@@ -457,8 +451,7 @@ def main() -> int:
 
     data_dir = args.data.resolve()
     manifest = ensure_data(
-        data_dir, args.rows, args.customers, args.products, args.row_group_size,
-        args.force_data
+        data_dir, args.rows, args.customers, args.products, args.row_group_size, args.force_data
     )
     gpu = get_gpu_status()
     engine = get_engine_version()

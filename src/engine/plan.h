@@ -14,19 +14,21 @@ namespace qe {
 // A catalog holds the Parquet tables registered for one query. Names are
 // matched case-insensitively.
 class Catalog {
- public:
+public:
   arrow::Status AddFile(const std::string& name, const std::string& path);
   void Add(TableInfo info);
   const TableInfo* Find(const std::string& name) const;
-  const std::vector<TableInfo>& tables() const { return tables_; }
+  const std::vector<TableInfo>& tables() const {
+    return tables_;
+  }
 
- private:
+private:
   std::vector<TableInfo> tables_;
 };
 
 struct JoinCondition {
-  sql::ExprPtr left;   // references the left input
-  sql::ExprPtr right;  // references the right input
+  sql::ExprPtr left;  // references the left input
+  sql::ExprPtr right; // references the right input
 };
 
 struct SortKey {
@@ -47,7 +49,7 @@ struct LogicalPlan {
   std::string table_alias;
   std::shared_ptr<ParquetSource> table_source;
   std::shared_ptr<arrow::Schema> file_schema;
-  std::vector<std::string> scan_columns;  // file column names, file order
+  std::vector<std::string> scan_columns; // file column names, file order
   std::vector<sql::ExprPtr> pushed_filters;
   int64_t estimated_rows = 0;
 
@@ -86,4 +88,4 @@ struct QueryPlan {
 
 arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catalog& catalog);
 
-}  // namespace qe
+} // namespace qe

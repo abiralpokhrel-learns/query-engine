@@ -12,16 +12,14 @@ namespace {
 
 const std::unordered_set<std::string>& Keywords() {
   static const std::unordered_set<std::string> keywords = {
-      "SELECT", "FROM",   "WHERE",  "GROUP", "BY",     "ORDER",  "ASC",
-      "DESC",   "LIMIT",  "JOIN",   "INNER", "LEFT",   "RIGHT",  "FULL",
-      "OUTER",  "CROSS",  "ON",     "AS",    "AND",    "OR",     "NOT",
-      "IS",     "NULL",   "TRUE",   "FALSE", "COUNT",  "SUM",    "AVG",
-      "MIN",    "MAX",    "DISTINCT", "HAVING", "UNION", "OFFSET", "LIKE",
-      "IN",     "BETWEEN", "CASE",  "WHEN",  "THEN",   "ELSE",   "END",
-      "WITH",   "CAST",   "NULLS",  "FIRST", "LAST",   "EXISTS", "ALL",
-      "ANY",    "ASOF",   "SEMI",   "ANTI",  "USING",  "NATURAL", "TOP",
-      "INSERT", "UPDATE", "DELETE", "CREATE", "DROP",  "ALTER",  "EXPLAIN",
-      "PRAGMA", "SHOW",   "DESCRIBE",
+      "SELECT",  "FROM",  "WHERE",    "GROUP",    "BY",     "ORDER",  "ASC",    "DESC",  "LIMIT",
+      "JOIN",    "INNER", "LEFT",     "RIGHT",    "FULL",   "OUTER",  "CROSS",  "ON",    "AS",
+      "AND",     "OR",    "NOT",      "IS",       "NULL",   "TRUE",   "FALSE",  "COUNT", "SUM",
+      "AVG",     "MIN",   "MAX",      "DISTINCT", "HAVING", "UNION",  "OFFSET", "LIKE",  "IN",
+      "BETWEEN", "CASE",  "WHEN",     "THEN",     "ELSE",   "END",    "WITH",   "CAST",  "NULLS",
+      "FIRST",   "LAST",  "EXISTS",   "ALL",      "ANY",    "ASOF",   "SEMI",   "ANTI",  "USING",
+      "NATURAL", "TOP",   "INSERT",   "UPDATE",   "DELETE", "CREATE", "DROP",   "ALTER", "EXPLAIN",
+      "PRAGMA",  "SHOW",  "DESCRIBE",
   };
   return keywords;
 }
@@ -49,11 +47,14 @@ std::string QuoteIdentifier(const std::string& name) {
       break;
     }
   }
-  if (simple) return name;
+  if (simple)
+    return name;
   std::string out = "\"";
   for (char c : name) {
-    if (c == '"') out += "\"\"";
-    else out += c;
+    if (c == '"')
+      out += "\"\"";
+    else
+      out += c;
   }
   out += '"';
   return out;
@@ -62,8 +63,10 @@ std::string QuoteIdentifier(const std::string& name) {
 std::string QuoteString(const std::string& value) {
   std::string out = "'";
   for (char c : value) {
-    if (c == '\'') out += "''";
-    else out += c;
+    if (c == '\'')
+      out += "''";
+    else
+      out += c;
   }
   out += "'";
   return out;
@@ -71,37 +74,49 @@ std::string QuoteString(const std::string& value) {
 
 std::string LiteralToString(const Literal& literal) {
   switch (literal.type) {
-    case LiteralType::Null:
-      return "NULL";
-    case LiteralType::Integer:
-      return std::to_string(literal.integer);
-    case LiteralType::Double: {
-      std::ostringstream out;
-      out << literal.real;
-      return out.str();
-    }
-    case LiteralType::String:
-      return QuoteString(literal.string);
-    case LiteralType::Boolean:
-      return literal.boolean ? "TRUE" : "FALSE";
+  case LiteralType::Null:
+    return "NULL";
+  case LiteralType::Integer:
+    return std::to_string(literal.integer);
+  case LiteralType::Double: {
+    std::ostringstream out;
+    out << literal.real;
+    return out.str();
+  }
+  case LiteralType::String:
+    return QuoteString(literal.string);
+  case LiteralType::Boolean:
+    return literal.boolean ? "TRUE" : "FALSE";
   }
   return "?";
 }
 
 std::string BinaryOpToString(BinaryOp op) {
   switch (op) {
-    case BinaryOp::Add: return "+";
-    case BinaryOp::Sub: return "-";
-    case BinaryOp::Mul: return "*";
-    case BinaryOp::Div: return "/";
-    case BinaryOp::Eq: return "=";
-    case BinaryOp::NotEq: return "!=";
-    case BinaryOp::Lt: return "<";
-    case BinaryOp::LtEq: return "<=";
-    case BinaryOp::Gt: return ">";
-    case BinaryOp::GtEq: return ">=";
-    case BinaryOp::And: return "AND";
-    case BinaryOp::Or: return "OR";
+  case BinaryOp::Add:
+    return "+";
+  case BinaryOp::Sub:
+    return "-";
+  case BinaryOp::Mul:
+    return "*";
+  case BinaryOp::Div:
+    return "/";
+  case BinaryOp::Eq:
+    return "=";
+  case BinaryOp::NotEq:
+    return "!=";
+  case BinaryOp::Lt:
+    return "<";
+  case BinaryOp::LtEq:
+    return "<=";
+  case BinaryOp::Gt:
+    return ">";
+  case BinaryOp::GtEq:
+    return ">=";
+  case BinaryOp::And:
+    return "AND";
+  case BinaryOp::Or:
+    return "OR";
   }
   return "?";
 }
@@ -123,12 +138,13 @@ ExprPtr MakeNot(ExprPtr expr) {
   return result;
 }
 
-}  // namespace
+} // namespace
 
 Lexer::Lexer(std::string input) : input_(std::move(input)) {}
 
 char Lexer::Peek(size_t ahead) const {
-  if (position_ + ahead >= input_.size()) return '\0';
+  if (position_ + ahead >= input_.size())
+    return '\0';
   return input_[position_ + ahead];
 }
 
@@ -143,7 +159,8 @@ void Lexer::SkipWhitespaceAndComments() {
       ++position_;
     } else if (c == '-' && Peek(1) == '-') {
       position_ += 2;
-      while (position_ < input_.size() && input_[position_] != '\n') ++position_;
+      while (position_ < input_.size() && input_[position_] != '\n')
+        ++position_;
     } else if (c == '/' && Peek(1) == '*') {
       position_ += 2;
       while (position_ < input_.size() && !(input_[position_] == '*' && Peek(1) == '/')) {
@@ -171,7 +188,8 @@ Lexer::Token Lexer::Next() {
   char c = Peek();
   if (IsIdentifierStart(c)) {
     size_t start = position_;
-    while (position_ < input_.size() && IsIdentifierBody(input_[position_])) ++position_;
+    while (position_ < input_.size() && IsIdentifierBody(input_[position_]))
+      ++position_;
     token.text = input_.substr(start, position_ - start);
     std::string upper = ToUpper(token.text);
     if (Keywords().contains(upper)) {
@@ -226,19 +244,22 @@ Lexer::Token Lexer::Next() {
 
   if (std::isdigit(static_cast<unsigned char>(c))) {
     size_t start = position_;
-    while (position_ < input_.size() && std::isdigit(static_cast<unsigned char>(input_[position_]))) {
+    while (position_ < input_.size() &&
+           std::isdigit(static_cast<unsigned char>(input_[position_]))) {
       ++position_;
     }
     if (Peek() == '.' && std::isdigit(static_cast<unsigned char>(Peek(1)))) {
       ++position_;
-      while (position_ < input_.size() && std::isdigit(static_cast<unsigned char>(input_[position_]))) {
+      while (position_ < input_.size() &&
+             std::isdigit(static_cast<unsigned char>(input_[position_]))) {
         ++position_;
       }
     }
     if (Peek() == 'e' || Peek() == 'E') {
       size_t save = position_;
       ++position_;
-      if (Peek() == '+' || Peek() == '-') ++position_;
+      if (Peek() == '+' || Peek() == '-')
+        ++position_;
       if (!std::isdigit(static_cast<unsigned char>(Peek()))) {
         position_ = save;
       } else {
@@ -259,10 +280,14 @@ Lexer::Token Lexer::Next() {
     position_ += width;
     return token;
   };
-  if (c == '!' && Peek(1) == '=') return symbol("!=", 2);
-  if (c == '<' && Peek(1) == '>') return symbol("<>", 2);
-  if (c == '<' && Peek(1) == '=') return symbol("<=", 2);
-  if (c == '>' && Peek(1) == '=') return symbol(">=", 2);
+  if (c == '!' && Peek(1) == '=')
+    return symbol("!=", 2);
+  if (c == '<' && Peek(1) == '>')
+    return symbol("<>", 2);
+  if (c == '<' && Peek(1) == '=')
+    return symbol("<=", 2);
+  if (c == '>' && Peek(1) == '=')
+    return symbol(">=", 2);
   if (c == '=' || c == '<' || c == '>' || c == '+' || c == '-' || c == '*' || c == '/' ||
       c == '(' || c == ')' || c == ',' || c == '.' || c == ';') {
     return symbol(std::string(1, c), 1);
@@ -292,8 +317,10 @@ Parser::Token Parser::Consume() {
 
 bool Parser::Match(TokenType type, std::string_view text) {
   const Token& token = Peek();
-  if (token.type != type) return false;
-  if (!text.empty() && token.text != text) return false;
+  if (token.type != type)
+    return false;
+  if (!text.empty() && token.text != text)
+    return false;
   ++cursor_;
   return true;
 }
@@ -306,8 +333,7 @@ Parser::Token Parser::Expect(TokenType type, std::string_view what) {
   const Token& token = Peek();
   // Keywords and symbols name the exact token that must appear. Numbers and
   // identifiers use `what` only as a description, so their text is not checked.
-  const bool exact_text =
-      type == TokenType::Keyword || type == TokenType::Symbol;
+  const bool exact_text = type == TokenType::Keyword || type == TokenType::Symbol;
   if (token.type != type || (exact_text && !what.empty() && token.text != what)) {
     Error("expected " + std::string(what) + ", found '" +
               (token.type == TokenType::End ? std::string("<end of query>") : token.text) + "'",
@@ -341,8 +367,8 @@ void Parser::Error(const std::string& message, size_t position) const {
       ++column;
     }
   }
-  throw SqlError("line " + std::to_string(line) + ", column " + std::to_string(column) +
-                     ": " + message,
+  throw SqlError("line " + std::to_string(line) + ", column " + std::to_string(column) + ": " +
+                     message,
                  position);
 }
 
@@ -371,7 +397,8 @@ SelectStmt Parser::ParseSelect() {
   // Select list.
   while (true) {
     stmt.items.push_back(ParseSelectItem());
-    if (!Match(TokenType::Symbol, ",")) break;
+    if (!Match(TokenType::Symbol, ","))
+      break;
   }
 
   if (!MatchKeyword("FROM")) {
@@ -380,11 +407,12 @@ SelectStmt Parser::ParseSelect() {
   stmt.from = ParseTableRef();
 
   while (true) {
-    if (Peek().type != TokenType::Keyword) break;
+    if (Peek().type != TokenType::Keyword)
+      break;
     const std::string& word = Peek().text;
-    if (word == "JOIN" || word == "INNER" || word == "LEFT" || word == "RIGHT" ||
-        word == "FULL" || word == "CROSS" || word == "NATURAL" || word == "SEMI" ||
-        word == "ANTI" || word == "ASOF") {
+    if (word == "JOIN" || word == "INNER" || word == "LEFT" || word == "RIGHT" || word == "FULL" ||
+        word == "CROSS" || word == "NATURAL" || word == "SEMI" || word == "ANTI" ||
+        word == "ASOF") {
       stmt.joins.push_back(ParseJoin());
     } else if (word == "OUTER") {
       Error("OUTER JOIN without INNER or LEFT is not supported", Peek().position);
@@ -410,7 +438,8 @@ SelectStmt Parser::ParseSelect() {
     Expect(TokenType::Keyword, "BY");
     while (true) {
       stmt.order_by.push_back(ParseOrderItem());
-      if (!Match(TokenType::Symbol, ",")) break;
+      if (!Match(TokenType::Symbol, ","))
+        break;
     }
   }
 
@@ -421,7 +450,8 @@ SelectStmt Parser::ParseSelect() {
     }
     try {
       int64_t value = std::stoll(number.text);
-      if (value < 0) Error(std::string(clause) + " must be non-negative", number.position);
+      if (value < 0)
+        Error(std::string(clause) + " must be non-negative", number.position);
       return value;
     } catch (const std::exception&) {
       Error(std::string(clause) + " value is out of range", number.position);
@@ -435,9 +465,8 @@ SelectStmt Parser::ParseSelect() {
     stmt.offset = parse_nonnegative("OFFSET");
   }
 
-  if (Peek().type == TokenType::Keyword &&
-      (Peek().text == "UNION" || Peek().text == "EXCEPT" || Peek().text == "INTERSECT" ||
-       Peek().text == "WITH")) {
+  if (Peek().type == TokenType::Keyword && (Peek().text == "UNION" || Peek().text == "EXCEPT" ||
+                                            Peek().text == "INTERSECT" || Peek().text == "WITH")) {
     Error(Peek().text + " is not supported", Peek().position);
   }
 
@@ -454,8 +483,8 @@ SelectItem Parser::ParseSelectItem() {
       Peek(1).text == "." && Peek(2).type == TokenType::Symbol && Peek(2).text == "*") {
     item.star = true;
     item.star_table = Consume().text;
-    Consume();  // .
-    Consume();  // *
+    Consume(); // .
+    Consume(); // *
     return item;
   }
 
@@ -496,8 +525,7 @@ JoinClause Parser::ParseJoin() {
     // plain JOIN
   } else {
     const Token& token = Peek();
-    Error(token.text + " JOIN is not supported (INNER and LEFT joins only)",
-          token.position);
+    Error(token.text + " JOIN is not supported (INNER and LEFT joins only)", token.position);
   }
   join.table = ParseTableRef();
   if (MatchKeyword("USING")) {
@@ -512,22 +540,23 @@ std::vector<ExprPtr> Parser::ParseExpressionList() {
   std::vector<ExprPtr> expressions;
   while (true) {
     expressions.push_back(ParseExpression());
-    if (!Match(TokenType::Symbol, ",")) break;
+    if (!Match(TokenType::Symbol, ","))
+      break;
   }
   return expressions;
 }
 
 OrderItem Parser::ParseOrderItem() {
   OrderItem item;
-  if (Peek().type == TokenType::Number &&
-      Peek().text.find_first_of(".eE") == std::string::npos) {
+  if (Peek().type == TokenType::Number && Peek().text.find_first_of(".eE") == std::string::npos) {
     Token number = Consume();
     try {
       item.ordinal = std::stoi(number.text);
     } catch (const std::exception&) {
       Error("ORDER BY position is out of range", number.position);
     }
-    if (item.ordinal < 1) Error("ORDER BY position must be >= 1", number.position);
+    if (item.ordinal < 1)
+      Error("ORDER BY position must be >= 1", number.position);
   } else {
     item.expr = ParseExpression();
   }
@@ -542,7 +571,9 @@ OrderItem Parser::ParseOrderItem() {
   return item;
 }
 
-ExprPtr Parser::ParseExpression() { return ParseOr(); }
+ExprPtr Parser::ParseExpression() {
+  return ParseOr();
+}
 
 ExprPtr Parser::ParseOr() {
   ExprPtr left = ParseAnd();
@@ -590,12 +621,18 @@ ExprPtr Parser::ParseComparison() {
        token.text == "<=" || token.text == ">" || token.text == ">=")) {
     Consume();
     BinaryOp op = BinaryOp::Eq;
-    if (token.text == "=") op = BinaryOp::Eq;
-    else if (token.text == "!=" || token.text == "<>") op = BinaryOp::NotEq;
-    else if (token.text == "<") op = BinaryOp::Lt;
-    else if (token.text == "<=") op = BinaryOp::LtEq;
-    else if (token.text == ">") op = BinaryOp::Gt;
-    else op = BinaryOp::GtEq;
+    if (token.text == "=")
+      op = BinaryOp::Eq;
+    else if (token.text == "!=" || token.text == "<>")
+      op = BinaryOp::NotEq;
+    else if (token.text == "<")
+      op = BinaryOp::Lt;
+    else if (token.text == "<=")
+      op = BinaryOp::LtEq;
+    else if (token.text == ">")
+      op = BinaryOp::Gt;
+    else
+      op = BinaryOp::GtEq;
 
     auto expr = std::make_shared<Expr>();
     expr->kind = ExprKind::Binary;
@@ -604,9 +641,8 @@ ExprPtr Parser::ParseComparison() {
     expr->right = ParseAdditive();
 
     if (Peek().type == TokenType::Symbol &&
-        (Peek().text == "=" || Peek().text == "!=" || Peek().text == "<>" ||
-         Peek().text == "<" || Peek().text == "<=" || Peek().text == ">" ||
-         Peek().text == ">=")) {
+        (Peek().text == "=" || Peek().text == "!=" || Peek().text == "<>" || Peek().text == "<" ||
+         Peek().text == "<=" || Peek().text == ">" || Peek().text == ">=")) {
       Error("chained comparisons are not supported; use AND", Peek().position);
     }
     return expr;
@@ -634,7 +670,7 @@ ExprPtr Parser::ParseComparison() {
   if (Peek().type == TokenType::Keyword && Peek().text == "NOT" &&
       Peek(1).type == TokenType::Keyword &&
       (Peek(1).text == "IN" || Peek(1).text == "BETWEEN" || Peek(1).text == "LIKE")) {
-    Consume();  // NOT
+    Consume(); // NOT
     negated = true;
   }
 
@@ -654,7 +690,8 @@ ExprPtr Parser::ParseComparison() {
       auto comparison = MakeBinary(BinaryOp::Eq, left, std::move(value));
       result = result ? MakeBinary(BinaryOp::Or, std::move(result), std::move(comparison))
                       : std::move(comparison);
-      if (!Match(TokenType::Symbol, ",")) break;
+      if (!Match(TokenType::Symbol, ","))
+        break;
     }
     Expect(TokenType::Symbol, ")");
     return negated ? MakeNot(std::move(result)) : result;
@@ -688,9 +725,12 @@ ExprPtr Parser::ParseAdditive() {
   ExprPtr left = ParseMultiplicative();
   while (true) {
     BinaryOp op;
-    if (Match(TokenType::Symbol, "+")) op = BinaryOp::Add;
-    else if (Match(TokenType::Symbol, "-")) op = BinaryOp::Sub;
-    else break;
+    if (Match(TokenType::Symbol, "+"))
+      op = BinaryOp::Add;
+    else if (Match(TokenType::Symbol, "-"))
+      op = BinaryOp::Sub;
+    else
+      break;
     auto expr = std::make_shared<Expr>();
     expr->kind = ExprKind::Binary;
     expr->binary_op = op;
@@ -705,9 +745,12 @@ ExprPtr Parser::ParseMultiplicative() {
   ExprPtr left = ParseUnary();
   while (true) {
     BinaryOp op;
-    if (Match(TokenType::Symbol, "*")) op = BinaryOp::Mul;
-    else if (Match(TokenType::Symbol, "/")) op = BinaryOp::Div;
-    else break;
+    if (Match(TokenType::Symbol, "*"))
+      op = BinaryOp::Mul;
+    else if (Match(TokenType::Symbol, "/"))
+      op = BinaryOp::Div;
+    else
+      break;
     auto expr = std::make_shared<Expr>();
     expr->kind = ExprKind::Binary;
     expr->binary_op = op;
@@ -857,26 +900,28 @@ ExprPtr Parser::ParseExpressionText(const std::string& text) {
 }
 
 std::string ExprToString(const ExprPtr& expr) {
-  if (!expr) return "<null>";
+  if (!expr)
+    return "<null>";
   switch (expr->kind) {
-    case ExprKind::Column:
-      return expr->table.empty() ? QuoteIdentifier(expr->column)
-                                 : QuoteIdentifier(expr->table) + "." + QuoteIdentifier(expr->column);
-    case ExprKind::Literal:
-      return LiteralToString(expr->literal);
-    case ExprKind::Star:
-      return "*";
-    case ExprKind::Binary: {
-      std::string op = BinaryOpToString(expr->binary_op);
-      return "(" + ExprToString(expr->left) + " " + op + " " + ExprToString(expr->right) + ")";
-    }
-    case ExprKind::Unary:
-      if (expr->unary_op == UnaryOp::Negate) return "-" + ExprToString(expr->left);
-      return "NOT (" + ExprToString(expr->left) + ")";
-    case ExprKind::IsNull:
-      return ExprToString(expr->left) + " IS NULL";
-    case ExprKind::Aggregate:
-      return expr->function + "(" + (expr->star ? "*" : ExprToString(expr->argument)) + ")";
+  case ExprKind::Column:
+    return expr->table.empty() ? QuoteIdentifier(expr->column)
+                               : QuoteIdentifier(expr->table) + "." + QuoteIdentifier(expr->column);
+  case ExprKind::Literal:
+    return LiteralToString(expr->literal);
+  case ExprKind::Star:
+    return "*";
+  case ExprKind::Binary: {
+    std::string op = BinaryOpToString(expr->binary_op);
+    return "(" + ExprToString(expr->left) + " " + op + " " + ExprToString(expr->right) + ")";
+  }
+  case ExprKind::Unary:
+    if (expr->unary_op == UnaryOp::Negate)
+      return "-" + ExprToString(expr->left);
+    return "NOT (" + ExprToString(expr->left) + ")";
+  case ExprKind::IsNull:
+    return ExprToString(expr->left) + " IS NULL";
+  case ExprKind::Aggregate:
+    return expr->function + "(" + (expr->star ? "*" : ExprToString(expr->argument)) + ")";
   }
   return "?";
 }
@@ -884,12 +929,15 @@ std::string ExprToString(const ExprPtr& expr) {
 std::string StatementToString(const SelectStmt& stmt) {
   std::ostringstream out;
   out << "SELECT ";
-  if (stmt.distinct) out << "DISTINCT ";
+  if (stmt.distinct)
+    out << "DISTINCT ";
   for (size_t i = 0; i < stmt.items.size(); ++i) {
-    if (i) out << ", ";
+    if (i)
+      out << ", ";
     const SelectItem& item = stmt.items[i];
     if (item.star) {
-      if (!item.star_table.empty()) out << QuoteIdentifier(item.star_table) << ".";
+      if (!item.star_table.empty())
+        out << QuoteIdentifier(item.star_table) << ".";
       out << "*";
     } else {
       out << ExprToString(item.expr);
@@ -899,33 +947,44 @@ std::string StatementToString(const SelectStmt& stmt) {
     }
   }
   out << " FROM " << QuoteIdentifier(stmt.from.name);
-  if (stmt.from.alias != stmt.from.name) out << " AS " << QuoteIdentifier(stmt.from.alias);
+  if (stmt.from.alias != stmt.from.name)
+    out << " AS " << QuoteIdentifier(stmt.from.alias);
   for (const JoinClause& join : stmt.joins) {
     out << (join.left_outer ? " LEFT JOIN " : " JOIN ") << QuoteIdentifier(join.table.name);
-    if (join.table.alias != join.table.name) out << " AS " << QuoteIdentifier(join.table.alias);
+    if (join.table.alias != join.table.name)
+      out << " AS " << QuoteIdentifier(join.table.alias);
     out << " ON " << ExprToString(join.on);
   }
-  if (stmt.where) out << " WHERE " << ExprToString(stmt.where);
+  if (stmt.where)
+    out << " WHERE " << ExprToString(stmt.where);
   if (!stmt.group_by.empty()) {
     out << " GROUP BY ";
     for (size_t i = 0; i < stmt.group_by.size(); ++i) {
-      if (i) out << ", ";
+      if (i)
+        out << ", ";
       out << ExprToString(stmt.group_by[i]);
     }
   }
-  if (stmt.having) out << " HAVING " << ExprToString(stmt.having);
+  if (stmt.having)
+    out << " HAVING " << ExprToString(stmt.having);
   if (!stmt.order_by.empty()) {
     out << " ORDER BY ";
     for (size_t i = 0; i < stmt.order_by.size(); ++i) {
-      if (i) out << ", ";
-      if (stmt.order_by[i].ordinal) out << stmt.order_by[i].ordinal;
-      else out << ExprToString(stmt.order_by[i].expr);
-      if (stmt.order_by[i].descending) out << " DESC";
+      if (i)
+        out << ", ";
+      if (stmt.order_by[i].ordinal)
+        out << stmt.order_by[i].ordinal;
+      else
+        out << ExprToString(stmt.order_by[i].expr);
+      if (stmt.order_by[i].descending)
+        out << " DESC";
     }
   }
-  if (stmt.limit >= 0) out << " LIMIT " << stmt.limit;
-  if (stmt.offset > 0) out << " OFFSET " << stmt.offset;
+  if (stmt.limit >= 0)
+    out << " LIMIT " << stmt.limit;
+  if (stmt.offset > 0)
+    out << " OFFSET " << stmt.offset;
   return out.str();
 }
 
-}  // namespace qe::sql
+} // namespace qe::sql

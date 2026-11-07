@@ -17,7 +17,7 @@ bool IsSupportedKeyType(const arrow::DataType& type);
 // True when two key types can be compared after casting to a common type.
 bool AreKeyTypesCompatible(const arrow::DataType& left, const arrow::DataType& right);
 
-arrow::Result<std::shared_ptr<arrow::DataType>> CommonKeyType(
-    const arrow::DataType& left, const arrow::DataType& right);
+arrow::Result<std::shared_ptr<arrow::DataType>> CommonKeyType(const arrow::DataType& left,
+                                                              const arrow::DataType& right);
 
-}  // namespace qe
+} // namespace qe

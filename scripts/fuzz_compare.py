@@ -16,6 +16,7 @@ import argparse
 import datetime as dt
 import json
 import math
+import os
 import random
 import subprocess
 import sys
@@ -25,7 +26,7 @@ from pathlib import Path
 import duckdb
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "build" / "qe-cli"
+BINARY = Path(os.environ.get("QE_CLI", str(ROOT / "build" / "qe-cli")))
 TABLE_NAMES = [
     "sales",
     "customers",
@@ -162,7 +163,17 @@ def _aggregate() -> str:
 
 def _make_query(rng: random.Random) -> str:
     kind = rng.choices(
-        ["filter", "aggregate", "distinct", "inner_join", "join_aggregate", "left_join", "topk", "offset", "set_filter"],
+        [
+            "filter",
+            "aggregate",
+            "distinct",
+            "inner_join",
+            "join_aggregate",
+            "left_join",
+            "topk",
+            "offset",
+            "set_filter",
+        ],
         weights=[20, 20, 12, 15, 10, 10, 8, 5, 10],
     )[0]
 
@@ -203,8 +214,13 @@ def _make_query(rng: random.Random) -> str:
         )
 
     if kind == "join_aggregate":
-        aggregates = [_aggregate().replace("amount", "s.amount").replace("quantity", "s.quantity").replace("unit_price", "s.unit_price")
-                      for _ in range(rng.randint(1, 3))]
+        aggregates = [
+            _aggregate()
+            .replace("amount", "s.amount")
+            .replace("quantity", "s.quantity")
+            .replace("unit_price", "s.unit_price")
+            for _ in range(rng.randint(1, 3))
+        ]
         where = _sales_where(rng, "s.")
         return (
             "SELECT c.country, "
@@ -300,7 +316,7 @@ def open_views(data_dir: Path) -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect()
     for name in TABLE_NAMES:
         path = (data_dir / f"{name}.parquet").as_posix()
-        conn.execute(f'CREATE VIEW "{name}" AS SELECT * FROM read_parquet(\'{path}\')')
+        conn.execute(f"CREATE VIEW \"{name}\" AS SELECT * FROM read_parquet('{path}')")
     return conn
 
 
