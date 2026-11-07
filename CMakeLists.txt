@@ -46,10 +46,18 @@ else()
 endif()
 
 target_link_libraries(qe_core PUBLIC ${QE_ARROW_TARGET} ${QE_PARQUET_TARGET})
-target_compile_options(qe_core PRIVATE -Wall -Wextra -Wpedantic)
+
+option(QE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+set(QE_WARNING_FLAGS -Wall -Wextra -Wpedantic)
+if(QE_WARNINGS_AS_ERRORS)
+  list(APPEND QE_WARNING_FLAGS -Werror)
+endif()
+
+target_compile_options(qe_core PRIVATE ${QE_WARNING_FLAGS})
 
 add_executable(qe-cli src/main.cpp)
 target_link_libraries(qe-cli PRIVATE qe_core)
+target_compile_options(qe-cli PRIVATE ${QE_WARNING_FLAGS})
 target_compile_definitions(qe-cli PRIVATE
   QE_VERSION="${PROJECT_VERSION}"
   QE_ARROW_VERSION="${Arrow_VERSION}"
@@ -65,4 +73,5 @@ endif()
 enable_testing()
 add_executable(qe_sql_test tests/sql_test.cpp)
 target_link_libraries(qe_sql_test PRIVATE qe_core)
+target_compile_options(qe_sql_test PRIVATE ${QE_WARNING_FLAGS})
 add_test(NAME sql_parser COMMAND qe_sql_test)
