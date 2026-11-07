@@ -2,11 +2,21 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
 
@@ -16,11 +26,19 @@ jobs:
           environment-file: environment.yml
           cache-environment: true
 
-      - name: Build
+      - name: Check formatting
+        shell: bash -el {0}
+        run: |
+          clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h')
+          ruff format --check .
+          ruff check .
+
+      - name: Build with warnings as errors
         shell: bash -el {0}
         run: |
           export QE_PREFIX="$CONDA_PREFIX"
           export CMAKE_BIN="$CONDA_PREFIX/bin/cmake"
+          export QE_WARNINGS_AS_ERRORS=ON
           scripts/build.sh
 
       - name: C++ parser tests
@@ -43,3 +61,116 @@ jobs:
           grep -q "Hash join" /tmp/qe-demo.out
           grep -q "LEFT JOIN + HAVING" /tmp/qe-demo.out
           grep -q "DISTINCT (version 2 clause)" /tmp/qe-demo.out
+
+      - name: Benchmark verification and regression check
+        if: github.event_name == 'pull_request'
+        shell: bash -el {0}
+        run: |
+          cp benchmarks/results/latest.json "$RUNNER_TEMP/benchmark-baseline.json"
+          python scripts/run_benchmarks.py --rows 1000000 --repeats 3 --warmups 1
+          python scripts/check_benchmark_regressions.py \
+            "$RUNNER_TEMP/benchmark-baseline.json" benchmarks/results/latest.json
+
+      - name: Upload benchmark report
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results
+          path: |
+            benchmarks/results/latest.json
+            benchmarks/results/latest.md
+            benchmarks/charts/latest.png
+          if-no-files-found: warn
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create environment
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      - name: Build with ASan and UBSan
+        shell: bash -el {0}
+        run: |
+          cmake -S . -B build-sanitize -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
+            -DQE_WARNINGS_AS_ERRORS=ON \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build-sanitize -j 4
+
+      - name: Parser tests under ASan and UBSan
+        shell: bash -el {0}
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build-sanitize --output-on-failure
+
+      - name: Correctness tests under ASan and UBSan
+        shell: bash -el {0}
+        env:
+          QE_CLI: build-sanitize/qe-cli
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: python -m pytest tests -q
+
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create environment
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      - name: Build with coverage instrumentation
+        shell: bash -el {0}
+        run: |
+          cmake -S . -B build-coverage -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
+            -DQE_WARNINGS_AS_ERRORS=ON \
+            -DCMAKE_CXX_FLAGS="--coverage -O0 -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+          cmake --build build-coverage -j 4
+
+      - name: Run tests
+        shell: bash -el {0}
+        env:
+          QE_CLI: build-coverage/qe-cli
+        run: |
+          ctest --test-dir build-coverage --output-on-failure
+          python -m pytest tests -q
+          python scripts/fuzz_compare.py --queries 200 --seed 2026
+
+      - name: Generate coverage report
+        shell: bash -el {0}
+        run: |
+          gcovr --root . --filter 'src/' --txt --xml coverage.xml --fail-under-line 60
+          gcovr --root . --filter 'src/' --txt-metric branch --txt
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: error
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          use_oidc: true
+          fail_ci_if_error: false

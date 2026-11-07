@@ -12,3 +12,6 @@ dependencies:
   - compilers
   - pytest
   - matplotlib
+  - clang-format=23.1.4
+  - ruff=0.17.4
+  - gcovr=8.8
