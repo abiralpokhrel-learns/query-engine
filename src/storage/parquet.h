@@ -16,8 +16,8 @@ namespace qe {
 class ParquetSource;
 
 struct TableInfo {
-  std::string name;   // name used in SQL
-  std::string path;   // path on disk
+  std::string name; // name used in SQL
+  std::string path; // path on disk
   std::shared_ptr<arrow::Schema> schema;
   int64_t num_rows = 0;
   int num_row_groups = 0;
@@ -27,26 +27,35 @@ struct TableInfo {
 // Owns an open Parquet file and its metadata. A ParquetSource outlives every
 // RecordBatchReader it creates (an Arrow requirement).
 class ParquetSource {
- public:
+public:
   static arrow::Result<std::shared_ptr<ParquetSource>> Open(const std::string& path);
 
-  const std::string& path() const { return path_; }
-  const std::shared_ptr<arrow::Schema>& schema() const { return schema_; }
-  int64_t num_rows() const { return num_rows_; }
-  int num_row_groups() const { return num_row_groups_; }
-  const std::shared_ptr<parquet::FileMetaData>& metadata() const { return metadata_; }
+  const std::string& path() const {
+    return path_;
+  }
+  const std::shared_ptr<arrow::Schema>& schema() const {
+    return schema_;
+  }
+  int64_t num_rows() const {
+    return num_rows_;
+  }
+  int num_row_groups() const {
+    return num_row_groups_;
+  }
+  const std::shared_ptr<parquet::FileMetaData>& metadata() const {
+    return metadata_;
+  }
 
   // Case-insensitive lookup of a file column.
   arrow::Result<int> FieldIndex(const std::string& name) const;
 
-  arrow::Result<std::unique_ptr<arrow::RecordBatchReader>> OpenReader(
-      const std::vector<int>& row_groups, const std::vector<int>& columns,
-      int64_t batch_size);
+  arrow::Result<std::unique_ptr<arrow::RecordBatchReader>>
+  OpenReader(const std::vector<int>& row_groups, const std::vector<int>& columns,
+             int64_t batch_size);
 
-  arrow::Result<std::shared_ptr<arrow::RecordBatch>> ReadAll(
-      const std::vector<int>& columns) const;
+  arrow::Result<std::shared_ptr<arrow::RecordBatch>> ReadAll(const std::vector<int>& columns) const;
 
- private:
+private:
   ParquetSource(std::string path, std::shared_ptr<arrow::Schema> schema,
                 std::unique_ptr<parquet::arrow::FileReader> reader);
 
@@ -72,4 +81,4 @@ bool RowGroupCanBeSkipped(const parquet::RowGroupMetaData& row_group,
 
 std::string DescribeScanFilter(const ScanFilter& filter, const std::string& column_name);
 
-}  // namespace qe
+} // namespace qe

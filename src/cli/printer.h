@@ -17,4 +17,4 @@ void PrintTable(const arrow::Table& table, int64_t max_rows, std::ostream& out);
 // max_rows < 0 means every row.
 std::string TableToJson(const arrow::Table& table, int64_t max_rows = -1);
 
-}  // namespace qe
+} // namespace qe

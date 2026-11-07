@@ -40,7 +40,7 @@ struct Options {
   std::string query;
   std::string format = "table";
   int64_t batch_size = 8192;
-  int64_t max_rows = -2;  // -2 means: 50 for tables, all rows for JSON.
+  int64_t max_rows = -2; // -2 means: 50 for tables, all rows for JSON.
   bool max_rows_set = false;
   bool explain = false;
   int repeat = 1;
@@ -82,30 +82,22 @@ std::pair<std::string, std::string> ParseTableSpec(const std::string& spec) {
 
 std::string DeriveTableName(const std::string& path) {
   std::string stem = std::filesystem::path(path).stem().string();
-  if (stem.empty()) stem = "table";
+  if (stem.empty())
+    stem = "table";
   for (char& c : stem) {
-    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') c = '_';
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
+      c = '_';
   }
-  if (std::isdigit(static_cast<unsigned char>(stem.front()))) stem = "t_" + stem;
+  if (std::isdigit(static_cast<unsigned char>(stem.front())))
+    stem = "t_" + stem;
   return stem;
 }
 
 bool NameExists(const std::vector<std::pair<std::string, std::string>>& tables,
                 const std::string& name) {
   const std::string lowered = Lower(name);
-  return std::any_of(tables.begin(), tables.end(), [&](const auto& entry) {
-    return Lower(entry.first) == lowered;
-  });
-}
-
-std::string UniqueTableName(const std::vector<std::pair<std::string, std::string>>& tables,
-                            std::string base) {
-  if (!NameExists(tables, base)) return base;
-  for (int suffix = 2; suffix < 10000; ++suffix) {
-    std::string candidate = base + "_" + std::to_string(suffix);
-    if (!NameExists(tables, candidate)) return candidate;
-  }
-  throw UsageError("could not derive a unique table name from '" + base + "'");
+  return std::any_of(tables.begin(), tables.end(),
+                     [&](const auto& entry) { return Lower(entry.first) == lowered; });
 }
 
 void PrintUsage(std::ostream& out) {
@@ -141,7 +133,8 @@ Options ParseOptions(int argc, char** argv) {
   bool query_set = false;
 
   auto require_value = [&](int& index, const std::string& option) -> std::string {
-    if (index + 1 >= argc) throw UsageError(option + " requires a value");
+    if (index + 1 >= argc)
+      throw UsageError(option + " requires a value");
     return argv[++index];
   };
 
@@ -180,7 +173,8 @@ Options ParseOptions(int argc, char** argv) {
       continue;
     }
     if (arg == "--query" || arg.rfind("--query=", 0) == 0) {
-      if (query_set) throw UsageError("--query may only be specified once");
+      if (query_set)
+        throw UsageError("--query may only be specified once");
       options.query = arg == "--query" ? require_value(i, "--query")
                                        : arg.substr(std::string("--query=").size());
       query_set = true;
@@ -192,24 +186,22 @@ Options ParseOptions(int argc, char** argv) {
       continue;
     }
     if (arg == "--batch-size" || arg.rfind("--batch-size=", 0) == 0) {
-      const std::string value =
-          arg == "--batch-size" ? require_value(i, "--batch-size")
-                                : arg.substr(std::string("--batch-size=").size());
+      const std::string value = arg == "--batch-size"
+                                    ? require_value(i, "--batch-size")
+                                    : arg.substr(std::string("--batch-size=").size());
       options.batch_size = ParseInteger(value, "--batch-size");
       continue;
     }
     if (arg == "--max-rows" || arg.rfind("--max-rows=", 0) == 0) {
-      const std::string value = arg == "--max-rows"
-                                    ? require_value(i, "--max-rows")
-                                    : arg.substr(std::string("--max-rows=").size());
+      const std::string value = arg == "--max-rows" ? require_value(i, "--max-rows")
+                                                    : arg.substr(std::string("--max-rows=").size());
       options.max_rows = Lower(value) == "all" ? -1 : ParseInteger(value, "--max-rows");
       options.max_rows_set = true;
       continue;
     }
     if (arg == "--repeat" || arg.rfind("--repeat=", 0) == 0) {
-      const std::string value = arg == "--repeat"
-                                    ? require_value(i, "--repeat")
-                                    : arg.substr(std::string("--repeat=").size());
+      const std::string value = arg == "--repeat" ? require_value(i, "--repeat")
+                                                  : arg.substr(std::string("--repeat=").size());
       const int64_t repeat = ParseInteger(value, "--repeat");
       if (repeat < 1 || repeat > 100000) {
         throw UsageError("--repeat must be between 1 and 100000");
@@ -221,12 +213,12 @@ Options ParseOptions(int argc, char** argv) {
       throw UsageError("unknown option '" + arg + "' (try --help)");
     }
 
-    if (options.path.empty() &&
-        (options.named_tables.empty() || std::filesystem::exists(arg) ||
-         Lower(arg).ends_with(".parquet"))) {
+    if (options.path.empty() && (options.named_tables.empty() || std::filesystem::exists(arg) ||
+                                 Lower(arg).ends_with(".parquet"))) {
       options.path = arg;
     } else {
-      if (!positional_query.empty()) positional_query += ' ';
+      if (!positional_query.empty())
+        positional_query += ' ';
       positional_query += arg;
     }
   }
@@ -270,16 +262,17 @@ void PrintScanStats(const qe::ExecutionStats& stats) {
             << " rows_after_pushdown=" << stats.rows_after_pushdown
             << " row_groups_read=" << stats.row_groups_read
             << " row_groups_skipped=" << stats.row_groups_skipped
-            << " row_groups_total=" << row_groups_total
-            << " batches=" << stats.batches_scanned
+            << " row_groups_total=" << row_groups_total << " batches=" << stats.batches_scanned
             << " rows_from_metadata=" << stats.rows_from_metadata << '\n';
 }
 
 double Median(std::vector<double> values) {
-  if (values.empty()) return 0.0;
+  if (values.empty())
+    return 0.0;
   std::sort(values.begin(), values.end());
   const size_t middle = values.size() / 2;
-  if (values.size() % 2 == 1) return values[middle];
+  if (values.size() % 2 == 1)
+    return values[middle];
   return (values[middle - 1] + values[middle]) / 2.0;
 }
 
@@ -295,7 +288,8 @@ int Run(int argc, char** argv) {
   }
 
   int64_t max_rows = options.max_rows;
-  if (!options.max_rows_set) max_rows = options.format == "table" ? 50 : -1;
+  if (!options.max_rows_set)
+    max_rows = options.format == "table" ? 50 : -1;
 
   qe::Catalog catalog;
   const auto load_start = Clock::now();
@@ -333,9 +327,8 @@ int Run(int argc, char** argv) {
     const double load_ms = Milliseconds(load_start, load_end);
     const double parse_ms = Milliseconds(parse_start, parse_end);
     const double plan_ms = Milliseconds(plan_start, plan_end);
-    std::cerr << std::fixed << std::setprecision(3)
-              << "timings: catalog_ms=" << load_ms << " parse_ms=" << parse_ms
-              << " plan_ms=" << plan_ms << '\n';
+    std::cerr << std::fixed << std::setprecision(3) << "timings: catalog_ms=" << load_ms
+              << " parse_ms=" << parse_ms << " plan_ms=" << plan_ms << '\n';
     return 0;
   }
 
@@ -371,24 +364,25 @@ int Run(int argc, char** argv) {
   std::cerr << std::fixed << std::setprecision(3);
   if (options.repeat == 1) {
     std::cerr << "timings: catalog_ms=" << load_ms << " parse_ms=" << parse_ms
-              << " plan_ms=" << plan_ms << " execute_ms=" << median_ms
-              << " total_ms=" << total_ms << '\n';
+              << " plan_ms=" << plan_ms << " execute_ms=" << median_ms << " total_ms=" << total_ms
+              << '\n';
   } else {
     std::cerr << "runs_ms:";
-    for (double time : execute_times) std::cerr << ' ' << time;
+    for (double time : execute_times)
+      std::cerr << ' ' << time;
     std::cerr << '\n';
     std::cerr << "timings: catalog_ms=" << load_ms << " parse_ms=" << parse_ms
-              << " plan_ms=" << plan_ms << " execute_ms=" << median_ms << " execute_min_ms="
-              << *std::min_element(execute_times.begin(), execute_times.end())
-              << " execute_max_ms="
-              << *std::max_element(execute_times.begin(), execute_times.end())
+              << " plan_ms=" << plan_ms << " execute_ms=" << median_ms
+              << " execute_min_ms=" << *std::min_element(execute_times.begin(), execute_times.end())
+              << " execute_max_ms=" << *std::max_element(execute_times.begin(), execute_times.end())
               << " total_ms=" << total_ms << " runs=" << options.repeat << '\n';
   }
-  if (options.show_stats) PrintScanStats(result.stats);
+  if (options.show_stats)
+    PrintScanStats(result.stats);
   return 0;
 }
 
-}  // namespace
+} // namespace
 
 int main(int argc, char** argv) {
   try {

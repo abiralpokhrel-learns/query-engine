@@ -31,9 +31,8 @@ void ExpectSqlError(const std::string& sql, const std::string& fragment) {
 }
 
 void TestBasicSelect() {
-  qe::sql::Parser parser(
-      "SELECT region, SUM(amount) AS total FROM sales WHERE amount > 10 "
-      "GROUP BY region ORDER BY total DESC LIMIT 5;");
+  qe::sql::Parser parser("SELECT region, SUM(amount) AS total FROM sales WHERE amount > 10 "
+                         "GROUP BY region ORDER BY total DESC LIMIT 5;");
   qe::sql::SelectStmt stmt = parser.Parse();
   Check(stmt.items.size() == 2, "two select items");
   Check(stmt.items[0].expr->kind == qe::sql::ExprKind::Column, "first item is column");
@@ -57,7 +56,8 @@ void TestStarAndJoin() {
   qe::sql::SelectStmt stmt = parser.Parse();
   Check(stmt.items.size() == 2, "two items");
   Check(stmt.items[0].star && stmt.items[0].star_table == "s", "qualified star");
-  Check(stmt.items[1].expr->table == "c" && stmt.items[1].expr->column == "name", "qualified column");
+  Check(stmt.items[1].expr->table == "c" && stmt.items[1].expr->column == "name",
+        "qualified column");
   Check(stmt.joins.size() == 1, "one join");
   Check(stmt.joins[0].table.alias == "c", "join alias");
   Check(stmt.joins[0].on->kind == qe::sql::ExprKind::Binary, "join on");
@@ -107,9 +107,8 @@ void TestArithmetic() {
 }
 
 void TestDistinctHavingLimitOffset() {
-  qe::sql::Parser parser(
-      "SELECT DISTINCT region, COUNT(*) AS n FROM sales GROUP BY region "
-      "HAVING COUNT(*) > 1 ORDER BY n DESC LIMIT 2 OFFSET 1");
+  qe::sql::Parser parser("SELECT DISTINCT region, COUNT(*) AS n FROM sales GROUP BY region "
+                         "HAVING COUNT(*) > 1 ORDER BY n DESC LIMIT 2 OFFSET 1");
   qe::sql::SelectStmt stmt = parser.Parse();
   Check(stmt.distinct, "distinct flag");
   Check(stmt.having != nullptr, "having expression");
@@ -187,7 +186,7 @@ void TestOrderOrdinal() {
   Check(stmt.order_by[0].descending, "ordinal descending");
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   TestBasicSelect();

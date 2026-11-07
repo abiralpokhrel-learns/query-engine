@@ -24,23 +24,23 @@ std::string ToLower(std::string_view text) {
 
 bool IsSupportedType(const arrow::DataType& type) {
   switch (type.id()) {
-    case arrow::Type::BOOL:
-    case arrow::Type::INT8:
-    case arrow::Type::INT16:
-    case arrow::Type::INT32:
-    case arrow::Type::INT64:
-    case arrow::Type::UINT8:
-    case arrow::Type::UINT16:
-    case arrow::Type::UINT32:
-    case arrow::Type::UINT64:
-    case arrow::Type::FLOAT:
-    case arrow::Type::DOUBLE:
-    case arrow::Type::STRING:
-    case arrow::Type::LARGE_STRING:
-    case arrow::Type::DATE32:
-      return true;
-    default:
-      return false;
+  case arrow::Type::BOOL:
+  case arrow::Type::INT8:
+  case arrow::Type::INT16:
+  case arrow::Type::INT32:
+  case arrow::Type::INT64:
+  case arrow::Type::UINT8:
+  case arrow::Type::UINT16:
+  case arrow::Type::UINT32:
+  case arrow::Type::UINT64:
+  case arrow::Type::FLOAT:
+  case arrow::Type::DOUBLE:
+  case arrow::Type::STRING:
+  case arrow::Type::LARGE_STRING:
+  case arrow::Type::DATE32:
+    return true;
+  default:
+    return false;
   }
 }
 
@@ -56,68 +56,69 @@ arrow::Status ValidateFlatSchema(const arrow::Schema& schema) {
   return arrow::Status::OK();
 }
 
-arrow::Result<std::shared_ptr<arrow::Scalar>> CastScalar(const std::shared_ptr<arrow::Scalar>& scalar,
-                                                         const std::shared_ptr<arrow::DataType>& type) {
-  if (scalar->type->Equals(type)) return scalar;
+arrow::Result<std::shared_ptr<arrow::Scalar>>
+CastScalar(const std::shared_ptr<arrow::Scalar>& scalar,
+           const std::shared_ptr<arrow::DataType>& type) {
+  if (scalar->type->Equals(type))
+    return scalar;
   return scalar->CastTo(type);
 }
 
 // Converts a SQL literal to an Arrow scalar. Dates may be written as ISO strings.
 arrow::Result<std::shared_ptr<arrow::Scalar>> LiteralToScalar(const sql::Literal& literal,
-                                                             const arrow::DataType& type) {
+                                                              const arrow::DataType& type) {
   switch (literal.type) {
-    case sql::LiteralType::Null:
-      return arrow::MakeNullScalar(type.GetSharedPtr());
-    case sql::LiteralType::Integer: {
-      if (type.id() == arrow::Type::DATE32) {
-        return arrow::MakeScalar(arrow::date32(), literal.integer);
+  case sql::LiteralType::Null:
+    return arrow::MakeNullScalar(type.GetSharedPtr());
+  case sql::LiteralType::Integer: {
+    if (type.id() == arrow::Type::DATE32) {
+      return arrow::MakeScalar(arrow::date32(), literal.integer);
+    }
+    auto scalar = arrow::MakeScalar(literal.integer);
+    return CastScalar(scalar, type.GetSharedPtr());
+  }
+  case sql::LiteralType::Double: {
+    auto scalar = arrow::MakeScalar(literal.real);
+    return CastScalar(scalar, type.GetSharedPtr());
+  }
+  case sql::LiteralType::String: {
+    if (type.id() == arrow::Type::DATE32) {
+      // Parse YYYY-MM-DD as days since the Unix epoch.
+      if (literal.string.size() != 10 || literal.string[4] != '-' || literal.string[7] != '-') {
+        return arrow::Status::Invalid("date literal must be YYYY-MM-DD: '" + literal.string + "'");
       }
-      auto scalar = arrow::MakeScalar(literal.integer);
-      return CastScalar(scalar, type.GetSharedPtr());
-    }
-    case sql::LiteralType::Double: {
-      auto scalar = arrow::MakeScalar(literal.real);
-      return CastScalar(scalar, type.GetSharedPtr());
-    }
-    case sql::LiteralType::String: {
-      if (type.id() == arrow::Type::DATE32) {
-        // Parse YYYY-MM-DD as days since the Unix epoch.
-        if (literal.string.size() != 10 || literal.string[4] != '-' ||
-            literal.string[7] != '-') {
-          return arrow::Status::Invalid("date literal must be YYYY-MM-DD: '" + literal.string + "'");
-        }
-        int year = 0, month = 0, day = 0;
-        try {
-          year = std::stoi(literal.string.substr(0, 4));
-          month = std::stoi(literal.string.substr(5, 2));
-          day = std::stoi(literal.string.substr(8, 2));
-        } catch (const std::exception&) {
-          return arrow::Status::Invalid("invalid date literal: '" + literal.string + "'");
-        }
-        if (month < 1 || month > 12 || day < 1 || day > 31) {
-          return arrow::Status::Invalid("invalid date literal: '" + literal.string + "'");
-        }
-        // Howard Hinnant's days_from_civil algorithm.
-        year -= month <= 2;
-        const int era = (year >= 0 ? year : year - 399) / 400;
-        const unsigned yoe = static_cast<unsigned>(year - era * 400);
-        const unsigned doy =
-            (153 * static_cast<unsigned>(month > 2 ? month - 3 : month + 9) + 2) / 5 +
-            static_cast<unsigned>(day) - 1;
-        const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        const int64_t days = static_cast<int64_t>(era) * 146097 + static_cast<int64_t>(doe) - 719468;
-        return arrow::MakeScalar(arrow::date32(), static_cast<int32_t>(days));
+      int year = 0, month = 0, day = 0;
+      try {
+        year = std::stoi(literal.string.substr(0, 4));
+        month = std::stoi(literal.string.substr(5, 2));
+        day = std::stoi(literal.string.substr(8, 2));
+      } catch (const std::exception&) {
+        return arrow::Status::Invalid("invalid date literal: '" + literal.string + "'");
       }
-      auto scalar = arrow::MakeScalar(literal.string);
-      if (type.id() == arrow::Type::BINARY) {
-        return CastScalar(scalar, type.GetSharedPtr());
+      if (month < 1 || month > 12 || day < 1 || day > 31) {
+        return arrow::Status::Invalid("invalid date literal: '" + literal.string + "'");
       }
+      // Howard Hinnant's days_from_civil algorithm.
+      year -= month <= 2;
+      const int era = (year >= 0 ? year : year - 399) / 400;
+      const unsigned yoe = static_cast<unsigned>(year - era * 400);
+      const unsigned doy =
+          (153 * static_cast<unsigned>(month > 2 ? month - 3 : month + 9) + 2) / 5 +
+          static_cast<unsigned>(day) - 1;
+      const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+      const int64_t days = static_cast<int64_t>(era) * 146097 + static_cast<int64_t>(doe) - 719468;
+      return arrow::MakeScalar(arrow::date32(), static_cast<int32_t>(days));
+    }
+    auto scalar = arrow::MakeScalar(literal.string);
+    if (type.id() == arrow::Type::BINARY) {
       return CastScalar(scalar, type.GetSharedPtr());
     }
-    case sql::LiteralType::Boolean: {
-      auto scalar = arrow::MakeScalar(literal.boolean);
-      return CastScalar(scalar, type.GetSharedPtr());
-    }
+    return CastScalar(scalar, type.GetSharedPtr());
+  }
+  case sql::LiteralType::Boolean: {
+    auto scalar = arrow::MakeScalar(literal.boolean);
+    return CastScalar(scalar, type.GetSharedPtr());
+  }
   }
   return arrow::Status::Invalid("unsupported literal");
 }
@@ -140,14 +141,16 @@ MakeComparable(const std::shared_ptr<arrow::Scalar>& value, const sql::Literal& 
       target = arrow::int64();
     }
   } else if (literal.type == sql::LiteralType::String) {
-    if (value->type->id() == arrow::Type::STRING || value->type->id() == arrow::Type::LARGE_STRING ||
+    if (value->type->id() == arrow::Type::STRING ||
+        value->type->id() == arrow::Type::LARGE_STRING ||
         value->type->id() == arrow::Type::BINARY) {
       target = value->type;
     } else if (value->type->id() == arrow::Type::DATE32) {
       target = arrow::date32();
     }
   } else if (literal.type == sql::LiteralType::Boolean) {
-    if (value->type->id() == arrow::Type::BOOL) target = arrow::boolean();
+    if (value->type->id() == arrow::Type::BOOL)
+      target = arrow::boolean();
   }
   if (!target) {
     return arrow::Status::Invalid("cannot compare " + value->type->ToString() + " to this literal");
@@ -186,41 +189,41 @@ arrow::Result<bool> RangeProvesNoMatch(const std::shared_ptr<arrow::Scalar>& min
   const auto& literal_max = max_cmp.second;
 
   switch (op) {
-    case sql::BinaryOp::Eq: {
-      // v < min or v > max
-      ARROW_ASSIGN_OR_RAISE(bool below, ScalarCompare("less", literal_min, min_value));
-      ARROW_ASSIGN_OR_RAISE(bool above, ScalarCompare("greater", literal_max, max_value));
-      return below || above;
-    }
-    case sql::BinaryOp::NotEq: {
-      ARROW_ASSIGN_OR_RAISE(bool equal_min, ScalarCompare("equal", literal_min, min_value));
-      ARROW_ASSIGN_OR_RAISE(bool equal_max, ScalarCompare("equal", literal_max, max_value));
-      return equal_min && equal_max;
-    }
-    case sql::BinaryOp::Lt: {
-      // no value < literal when min >= literal
-      ARROW_ASSIGN_OR_RAISE(bool ge, ScalarCompare("greater_equal", min_value, literal_min));
-      return ge;
-    }
-    case sql::BinaryOp::LtEq: {
-      ARROW_ASSIGN_OR_RAISE(bool gt, ScalarCompare("greater", min_value, literal_min));
-      return gt;
-    }
-    case sql::BinaryOp::Gt: {
-      // no value > literal when max <= literal
-      ARROW_ASSIGN_OR_RAISE(bool le, ScalarCompare("less_equal", max_value, literal_max));
-      return le;
-    }
-    case sql::BinaryOp::GtEq: {
-      ARROW_ASSIGN_OR_RAISE(bool lt, ScalarCompare("less", max_value, literal_max));
-      return lt;
-    }
-    default:
-      return arrow::Status::Invalid("operator is not a comparison");
+  case sql::BinaryOp::Eq: {
+    // v < min or v > max
+    ARROW_ASSIGN_OR_RAISE(bool below, ScalarCompare("less", literal_min, min_value));
+    ARROW_ASSIGN_OR_RAISE(bool above, ScalarCompare("greater", literal_max, max_value));
+    return below || above;
+  }
+  case sql::BinaryOp::NotEq: {
+    ARROW_ASSIGN_OR_RAISE(bool equal_min, ScalarCompare("equal", literal_min, min_value));
+    ARROW_ASSIGN_OR_RAISE(bool equal_max, ScalarCompare("equal", literal_max, max_value));
+    return equal_min && equal_max;
+  }
+  case sql::BinaryOp::Lt: {
+    // no value < literal when min >= literal
+    ARROW_ASSIGN_OR_RAISE(bool ge, ScalarCompare("greater_equal", min_value, literal_min));
+    return ge;
+  }
+  case sql::BinaryOp::LtEq: {
+    ARROW_ASSIGN_OR_RAISE(bool gt, ScalarCompare("greater", min_value, literal_min));
+    return gt;
+  }
+  case sql::BinaryOp::Gt: {
+    // no value > literal when max <= literal
+    ARROW_ASSIGN_OR_RAISE(bool le, ScalarCompare("less_equal", max_value, literal_max));
+    return le;
+  }
+  case sql::BinaryOp::GtEq: {
+    ARROW_ASSIGN_OR_RAISE(bool lt, ScalarCompare("less", max_value, literal_max));
+    return lt;
+  }
+  default:
+    return arrow::Status::Invalid("operator is not a comparison");
   }
 }
 
-}  // namespace
+} // namespace
 
 ParquetSource::ParquetSource(std::string path, std::shared_ptr<arrow::Schema> schema,
                              std::unique_ptr<parquet::arrow::FileReader> reader)
@@ -270,8 +273,9 @@ arrow::Result<int> ParquetSource::FieldIndex(const std::string& name) const {
   return found;
 }
 
-arrow::Result<std::unique_ptr<arrow::RecordBatchReader>> ParquetSource::OpenReader(
-    const std::vector<int>& row_groups, const std::vector<int>& columns, int64_t batch_size) {
+arrow::Result<std::unique_ptr<arrow::RecordBatchReader>>
+ParquetSource::OpenReader(const std::vector<int>& row_groups, const std::vector<int>& columns,
+                          int64_t batch_size) {
   if (row_groups.empty()) {
     return arrow::Status::Invalid("cannot open a reader with no row groups");
   }
@@ -281,8 +285,8 @@ arrow::Result<std::unique_ptr<arrow::RecordBatchReader>> ParquetSource::OpenRead
   return reader;
 }
 
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> ParquetSource::ReadAll(
-    const std::vector<int>& columns) const {
+arrow::Result<std::shared_ptr<arrow::RecordBatch>>
+ParquetSource::ReadAll(const std::vector<int>& columns) const {
   std::shared_ptr<arrow::Table> table;
   ARROW_RETURN_NOT_OK(reader_->ReadTable(columns, &table));
   return table->CombineChunksToBatch();
@@ -290,18 +294,23 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> ParquetSource::ReadAll(
 
 bool RowGroupCanBeSkipped(const parquet::RowGroupMetaData& row_group,
                           const std::vector<ScanFilter>& filters) {
-  if (filters.empty()) return false;
+  if (filters.empty())
+    return false;
   for (const ScanFilter& filter : filters) {
-    if (filter.column_index < 0 || filter.column_index >= row_group.num_columns()) continue;
+    if (filter.column_index < 0 || filter.column_index >= row_group.num_columns())
+      continue;
     auto chunk = row_group.ColumnChunk(filter.column_index);
-    if (!chunk || !chunk->is_stats_set()) continue;
+    if (!chunk || !chunk->is_stats_set())
+      continue;
     auto stats = chunk->statistics();
-    if (!stats || !stats->HasMinMax() || stats->num_values() == 0) continue;
+    if (!stats || !stats->HasMinMax() || stats->num_values() == 0)
+      continue;
 
     std::shared_ptr<arrow::Scalar> min;
     std::shared_ptr<arrow::Scalar> max;
     auto status = parquet::arrow::StatisticsAsScalars(*stats, &min, &max);
-    if (!status.ok() || !min || !max) continue;
+    if (!status.ok() || !min || !max)
+      continue;
 
     auto can_skip = RangeProvesNoMatch(min, max, filter.literal, filter.op);
     if (can_skip.ok() && can_skip.ValueOrDie()) {
@@ -314,24 +323,48 @@ bool RowGroupCanBeSkipped(const parquet::RowGroupMetaData& row_group,
 std::string DescribeScanFilter(const ScanFilter& filter, const std::string& column_name) {
   const char* op = "";
   switch (filter.op) {
-    case sql::BinaryOp::Eq: op = "="; break;
-    case sql::BinaryOp::NotEq: op = "!="; break;
-    case sql::BinaryOp::Lt: op = "<"; break;
-    case sql::BinaryOp::LtEq: op = "<="; break;
-    case sql::BinaryOp::Gt: op = ">"; break;
-    case sql::BinaryOp::GtEq: op = ">="; break;
-    default: op = "?"; break;
+  case sql::BinaryOp::Eq:
+    op = "=";
+    break;
+  case sql::BinaryOp::NotEq:
+    op = "!=";
+    break;
+  case sql::BinaryOp::Lt:
+    op = "<";
+    break;
+  case sql::BinaryOp::LtEq:
+    op = "<=";
+    break;
+  case sql::BinaryOp::Gt:
+    op = ">";
+    break;
+  case sql::BinaryOp::GtEq:
+    op = ">=";
+    break;
+  default:
+    op = "?";
+    break;
   }
   std::ostringstream out;
   out << column_name << " " << op << " ";
   switch (filter.literal.type) {
-    case sql::LiteralType::Null: out << "NULL"; break;
-    case sql::LiteralType::Integer: out << filter.literal.integer; break;
-    case sql::LiteralType::Double: out << filter.literal.real; break;
-    case sql::LiteralType::String: out << "'" << filter.literal.string << "'"; break;
-    case sql::LiteralType::Boolean: out << (filter.literal.boolean ? "TRUE" : "FALSE"); break;
+  case sql::LiteralType::Null:
+    out << "NULL";
+    break;
+  case sql::LiteralType::Integer:
+    out << filter.literal.integer;
+    break;
+  case sql::LiteralType::Double:
+    out << filter.literal.real;
+    break;
+  case sql::LiteralType::String:
+    out << "'" << filter.literal.string << "'";
+    break;
+  case sql::LiteralType::Boolean:
+    out << (filter.literal.boolean ? "TRUE" : "FALSE");
+    break;
   }
   return out.str();
 }
 
-}  // namespace qe
+} // namespace qe

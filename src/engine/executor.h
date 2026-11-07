@@ -23,8 +23,8 @@ struct ExecutionResult {
 arrow::Result<ExecutionResult> ExecutePlan(const std::shared_ptr<LogicalPlan>& plan,
                                            const ExecutionOptions& options);
 
-arrow::Result<std::unique_ptr<Operator>> BuildOperator(
-    const std::shared_ptr<LogicalPlan>& plan, const ExecutionOptions& options,
-    const std::shared_ptr<ExecutionStats>& stats);
+arrow::Result<std::unique_ptr<Operator>>
+BuildOperator(const std::shared_ptr<LogicalPlan>& plan, const ExecutionOptions& options,
+              const std::shared_ptr<ExecutionStats>& stats);
 
-}  // namespace qe
+} // namespace qe

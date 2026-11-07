@@ -53,16 +53,16 @@ std::string FormatDate32(int32_t value) {
   return buffer;
 }
 
-template <typename T>
-std::string FormatFloating(T value, int precision = 0) {
-  if (std::isnan(value)) return "nan";
-  if (std::isinf(value)) return value < 0 ? "-inf" : "inf";
+template <typename T> std::string FormatFloating(T value, int precision = 0) {
+  if (std::isnan(value))
+    return "nan";
+  if (std::isinf(value))
+    return value < 0 ? "-inf" : "inf";
   char buffer[64];
-  auto result = precision > 0
-                    ? std::to_chars(buffer, buffer + sizeof(buffer), value,
-                                    std::chars_format::general, precision)
-                    : std::to_chars(buffer, buffer + sizeof(buffer), value,
-                                    std::chars_format::general);
+  auto result = precision > 0 ? std::to_chars(buffer, buffer + sizeof(buffer), value,
+                                              std::chars_format::general, precision)
+                              : std::to_chars(buffer, buffer + sizeof(buffer), value,
+                                              std::chars_format::general);
   if (result.ec != std::errc()) {
     std::ostringstream fallback;
     fallback << std::setprecision(precision > 0 ? precision : 15) << value;
@@ -90,18 +90,28 @@ std::string EscapeForTable(std::string_view text) {
   result.reserve(text.size());
   for (char c : text) {
     switch (c) {
-      case '\n': result += "\\n"; break;
-      case '\r': result += "\\r"; break;
-      case '\t': result += "\\t"; break;
-      default: result.push_back(c); break;
+    case '\n':
+      result += "\\n";
+      break;
+    case '\r':
+      result += "\\r";
+      break;
+    case '\t':
+      result += "\\t";
+      break;
+    default:
+      result.push_back(c);
+      break;
     }
   }
   return result;
 }
 
 std::string Truncate(std::string text, size_t width) {
-  if (text.size() <= width) return text;
-  if (width <= 3) return text.substr(0, width);
+  if (text.size() <= width)
+    return text;
+  if (width <= 3)
+    return text.substr(0, width);
   text.resize(width - 3);
   text += "...";
   return text;
@@ -115,7 +125,8 @@ struct ColumnView {
 ColumnView MakeView(const std::shared_ptr<arrow::ChunkedArray>& column) {
   ColumnView view;
   for (const auto& chunk : column->chunks()) {
-    if (!chunk || chunk->length() == 0) continue;
+    if (!chunk || chunk->length() == 0)
+      continue;
     view.chunks.push_back(chunk);
     view.num_rows += chunk->length();
   }
@@ -137,22 +148,36 @@ void AppendJsonString(std::string& out, std::string_view text) {
   out.push_back('"');
   for (unsigned char c : text) {
     switch (c) {
-      case '"': out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\b': out += "\\b"; break;
-      case '\f': out += "\\f"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default:
-        if (c < 0x20) {
-          char buffer[8];
-          std::snprintf(buffer, sizeof(buffer), "\\u%04x", static_cast<unsigned>(c));
-          out += buffer;
-        } else {
-          out.push_back(static_cast<char>(c));
-        }
-        break;
+    case '"':
+      out += "\\\"";
+      break;
+    case '\\':
+      out += "\\\\";
+      break;
+    case '\b':
+      out += "\\b";
+      break;
+    case '\f':
+      out += "\\f";
+      break;
+    case '\n':
+      out += "\\n";
+      break;
+    case '\r':
+      out += "\\r";
+      break;
+    case '\t':
+      out += "\\t";
+      break;
+    default:
+      if (c < 0x20) {
+        char buffer[8];
+        std::snprintf(buffer, sizeof(buffer), "\\u%04x", static_cast<unsigned>(c));
+        out += buffer;
+      } else {
+        out.push_back(static_cast<char>(c));
+      }
+      break;
     }
   }
   out.push_back('"');
@@ -165,114 +190,134 @@ void AppendJsonValue(std::string& out, const arrow::Array& array, int64_t index)
   }
 
   switch (array.type_id()) {
-    case arrow::Type::BOOL:
-      out += static_cast<const arrow::BooleanArray&>(array).Value(index) ? "true" : "false";
-      break;
-    case arrow::Type::INT8:
-    case arrow::Type::INT16:
-    case arrow::Type::INT32:
-    case arrow::Type::INT64:
-    case arrow::Type::UINT8:
-    case arrow::Type::UINT16:
-    case arrow::Type::UINT32:
-    case arrow::Type::UINT64:
-      out += FormatValue(array, index);
-      break;
-    case arrow::Type::FLOAT:
-    case arrow::Type::DOUBLE: {
-      const std::string text = FormatValue(array, index);
-      if (text == "nan" || text == "inf" || text == "-inf") {
-        AppendJsonString(out, text);
-      } else {
-        out += text;
-      }
-      break;
+  case arrow::Type::BOOL:
+    out += static_cast<const arrow::BooleanArray&>(array).Value(index) ? "true" : "false";
+    break;
+  case arrow::Type::INT8:
+  case arrow::Type::INT16:
+  case arrow::Type::INT32:
+  case arrow::Type::INT64:
+  case arrow::Type::UINT8:
+  case arrow::Type::UINT16:
+  case arrow::Type::UINT32:
+  case arrow::Type::UINT64:
+    out += FormatValue(array, index);
+    break;
+  case arrow::Type::FLOAT:
+  case arrow::Type::DOUBLE: {
+    const std::string text = FormatValue(array, index);
+    if (text == "nan" || text == "inf" || text == "-inf") {
+      AppendJsonString(out, text);
+    } else {
+      out += text;
     }
-    case arrow::Type::STRING:
-    case arrow::Type::LARGE_STRING:
-    case arrow::Type::DATE32:
-      AppendJsonString(out, FormatValue(array, index));
-      break;
-    case arrow::Type::NA:
-      out += "null";
-      break;
-    default:
-      AppendJsonString(out, FormatValue(array, index));
-      break;
+    break;
+  }
+  case arrow::Type::STRING:
+  case arrow::Type::LARGE_STRING:
+  case arrow::Type::DATE32:
+    AppendJsonString(out, FormatValue(array, index));
+    break;
+  case arrow::Type::NA:
+    out += "null";
+    break;
+  default:
+    AppendJsonString(out, FormatValue(array, index));
+    break;
   }
 }
 
-}  // namespace
+} // namespace
 
 std::string ColumnTypeName(const arrow::DataType& type) {
   switch (type.id()) {
-    case arrow::Type::BOOL: return "bool";
-    case arrow::Type::INT8: return "int8";
-    case arrow::Type::INT16: return "int16";
-    case arrow::Type::INT32: return "int32";
-    case arrow::Type::INT64: return "int64";
-    case arrow::Type::UINT8: return "uint8";
-    case arrow::Type::UINT16: return "uint16";
-    case arrow::Type::UINT32: return "uint32";
-    case arrow::Type::UINT64: return "uint64";
-    case arrow::Type::FLOAT: return "float";
-    case arrow::Type::DOUBLE: return "double";
-    case arrow::Type::STRING: return "string";
-    case arrow::Type::LARGE_STRING: return "large_string";
-    case arrow::Type::DATE32: return "date32";
-    case arrow::Type::NA: return "null";
-    default: return type.ToString();
+  case arrow::Type::BOOL:
+    return "bool";
+  case arrow::Type::INT8:
+    return "int8";
+  case arrow::Type::INT16:
+    return "int16";
+  case arrow::Type::INT32:
+    return "int32";
+  case arrow::Type::INT64:
+    return "int64";
+  case arrow::Type::UINT8:
+    return "uint8";
+  case arrow::Type::UINT16:
+    return "uint16";
+  case arrow::Type::UINT32:
+    return "uint32";
+  case arrow::Type::UINT64:
+    return "uint64";
+  case arrow::Type::FLOAT:
+    return "float";
+  case arrow::Type::DOUBLE:
+    return "double";
+  case arrow::Type::STRING:
+    return "string";
+  case arrow::Type::LARGE_STRING:
+    return "large_string";
+  case arrow::Type::DATE32:
+    return "date32";
+  case arrow::Type::NA:
+    return "null";
+  default:
+    return type.ToString();
   }
 }
 
 std::string FormatValue(const arrow::Array& array, int64_t index) {
-  if (!array.IsValid(index)) return "NULL";
+  if (!array.IsValid(index))
+    return "NULL";
 
   switch (array.type_id()) {
-    case arrow::Type::BOOL:
-      return static_cast<const arrow::BooleanArray&>(array).Value(index) ? "true" : "false";
-    case arrow::Type::INT8:
-      return std::to_string(static_cast<const arrow::Int8Array&>(array).Value(index));
-    case arrow::Type::INT16:
-      return std::to_string(static_cast<const arrow::Int16Array&>(array).Value(index));
-    case arrow::Type::INT32:
-      return std::to_string(static_cast<const arrow::Int32Array&>(array).Value(index));
-    case arrow::Type::INT64:
-      return std::to_string(static_cast<const arrow::Int64Array&>(array).Value(index));
-    case arrow::Type::UINT8:
-      return std::to_string(static_cast<const arrow::UInt8Array&>(array).Value(index));
-    case arrow::Type::UINT16:
-      return std::to_string(static_cast<const arrow::UInt16Array&>(array).Value(index));
-    case arrow::Type::UINT32:
-      return std::to_string(static_cast<const arrow::UInt32Array&>(array).Value(index));
-    case arrow::Type::UINT64:
-      return std::to_string(static_cast<const arrow::UInt64Array&>(array).Value(index));
-    case arrow::Type::FLOAT:
-      return FormatFloating(static_cast<const arrow::FloatArray&>(array).Value(index));
-    case arrow::Type::DOUBLE:
-      return FormatFloating(static_cast<const arrow::DoubleArray&>(array).Value(index));
-    case arrow::Type::STRING:
-      return static_cast<const arrow::StringArray&>(array).GetString(index);
-    case arrow::Type::LARGE_STRING:
-      return static_cast<const arrow::LargeStringArray&>(array).GetString(index);
-    case arrow::Type::DATE32:
-      return FormatDate32(static_cast<const arrow::Date32Array&>(array).Value(index));
-    case arrow::Type::NA:
-      return "NULL";
-    default:
-      break;
+  case arrow::Type::BOOL:
+    return static_cast<const arrow::BooleanArray&>(array).Value(index) ? "true" : "false";
+  case arrow::Type::INT8:
+    return std::to_string(static_cast<const arrow::Int8Array&>(array).Value(index));
+  case arrow::Type::INT16:
+    return std::to_string(static_cast<const arrow::Int16Array&>(array).Value(index));
+  case arrow::Type::INT32:
+    return std::to_string(static_cast<const arrow::Int32Array&>(array).Value(index));
+  case arrow::Type::INT64:
+    return std::to_string(static_cast<const arrow::Int64Array&>(array).Value(index));
+  case arrow::Type::UINT8:
+    return std::to_string(static_cast<const arrow::UInt8Array&>(array).Value(index));
+  case arrow::Type::UINT16:
+    return std::to_string(static_cast<const arrow::UInt16Array&>(array).Value(index));
+  case arrow::Type::UINT32:
+    return std::to_string(static_cast<const arrow::UInt32Array&>(array).Value(index));
+  case arrow::Type::UINT64:
+    return std::to_string(static_cast<const arrow::UInt64Array&>(array).Value(index));
+  case arrow::Type::FLOAT:
+    return FormatFloating(static_cast<const arrow::FloatArray&>(array).Value(index));
+  case arrow::Type::DOUBLE:
+    return FormatFloating(static_cast<const arrow::DoubleArray&>(array).Value(index));
+  case arrow::Type::STRING:
+    return static_cast<const arrow::StringArray&>(array).GetString(index);
+  case arrow::Type::LARGE_STRING:
+    return static_cast<const arrow::LargeStringArray&>(array).GetString(index);
+  case arrow::Type::DATE32:
+    return FormatDate32(static_cast<const arrow::Date32Array&>(array).Value(index));
+  case arrow::Type::NA:
+    return "NULL";
+  default:
+    break;
   }
 
   auto scalar = array.GetScalar(index);
-  if (scalar.ok() && scalar.ValueOrDie()) return scalar.ValueOrDie()->ToString();
+  if (scalar.ok() && scalar.ValueOrDie())
+    return scalar.ValueOrDie()->ToString();
   return "NULL";
 }
 
 void PrintTable(const arrow::Table& table, int64_t max_rows, std::ostream& out) {
   const int64_t total_rows = table.num_rows();
   int64_t visible_rows = total_rows;
-  if (max_rows >= 0 && max_rows < visible_rows) visible_rows = max_rows;
-  if (visible_rows < 0) visible_rows = 0;
+  if (max_rows >= 0 && max_rows < visible_rows)
+    visible_rows = max_rows;
+  if (visible_rows < 0)
+    visible_rows = 0;
 
   const int num_columns = table.num_columns();
   if (num_columns == 0) {
@@ -291,7 +336,8 @@ void PrintTable(const arrow::Table& table, int64_t max_rows, std::ostream& out) 
 
   std::vector<ColumnView> views;
   views.reserve(num_columns);
-  for (int c = 0; c < num_columns; ++c) views.push_back(MakeView(table.column(c)));
+  for (int c = 0; c < num_columns; ++c)
+    views.push_back(MakeView(table.column(c)));
 
   std::vector<std::vector<std::string>> rows;
   rows.reserve(static_cast<size_t>(visible_rows));
@@ -300,7 +346,8 @@ void PrintTable(const arrow::Table& table, int64_t max_rows, std::ostream& out) 
     row.reserve(num_columns);
     for (int c = 0; c < num_columns; ++c) {
       std::string value = EscapeForTable(ValueAt(views[c], r));
-      if (value.size() > kMaxCellWidth) value = Truncate(std::move(value), kMaxCellWidth);
+      if (value.size() > kMaxCellWidth)
+        value = Truncate(std::move(value), kMaxCellWidth);
       widths[c] = std::max(widths[c], value.size());
       row.push_back(std::move(value));
     }
@@ -309,14 +356,16 @@ void PrintTable(const arrow::Table& table, int64_t max_rows, std::ostream& out) 
 
   auto print_rule = [&]() {
     for (int c = 0; c < num_columns; ++c) {
-      if (c) out << "  ";
+      if (c)
+        out << "  ";
       out << std::string(widths[c], '-');
     }
     out << '\n';
   };
 
   for (int c = 0; c < num_columns; ++c) {
-    if (c) out << "  ";
+    if (c)
+      out << "  ";
     out << std::left << std::setw(static_cast<int>(widths[c])) << headers[c];
   }
   out << '\n';
@@ -324,7 +373,8 @@ void PrintTable(const arrow::Table& table, int64_t max_rows, std::ostream& out) 
 
   for (const auto& row : rows) {
     for (int c = 0; c < num_columns; ++c) {
-      if (c) out << "  ";
+      if (c)
+        out << "  ";
       out << std::left << std::setw(static_cast<int>(widths[c])) << row[c];
     }
     out << '\n';
@@ -341,18 +391,22 @@ void PrintTable(const arrow::Table& table, int64_t max_rows, std::ostream& out) 
 std::string TableToJson(const arrow::Table& table, int64_t max_rows) {
   const int64_t total_rows = table.num_rows();
   int64_t visible_rows = total_rows;
-  if (max_rows >= 0 && max_rows < visible_rows) visible_rows = max_rows;
-  if (visible_rows < 0) visible_rows = 0;
+  if (max_rows >= 0 && max_rows < visible_rows)
+    visible_rows = max_rows;
+  if (visible_rows < 0)
+    visible_rows = 0;
 
   std::vector<ColumnView> views;
   views.reserve(static_cast<size_t>(table.num_columns()));
-  for (int c = 0; c < table.num_columns(); ++c) views.push_back(MakeView(table.column(c)));
+  for (int c = 0; c < table.num_columns(); ++c)
+    views.push_back(MakeView(table.column(c)));
 
   std::string out;
   out.reserve(static_cast<size_t>(visible_rows * table.num_columns() * 8 + 128));
   out += "{\"columns\":[";
   for (int c = 0; c < table.num_columns(); ++c) {
-    if (c) out += ',';
+    if (c)
+      out += ',';
     out += "{\"name\":";
     AppendJsonString(out, table.schema()->field(c)->name());
     out += ",\"type\":";
@@ -362,10 +416,12 @@ std::string TableToJson(const arrow::Table& table, int64_t max_rows) {
   out += "],\"rows\":[";
 
   for (int64_t r = 0; r < visible_rows; ++r) {
-    if (r) out += ',';
+    if (r)
+      out += ',';
     out += '[';
     for (int c = 0; c < table.num_columns(); ++c) {
-      if (c) out += ',';
+      if (c)
+        out += ',';
       const auto& view = views[c];
       int64_t remaining = r;
       bool found = false;
@@ -377,7 +433,8 @@ std::string TableToJson(const arrow::Table& table, int64_t max_rows) {
         }
         remaining -= chunk->length();
       }
-      if (!found) out += "null";
+      if (!found)
+        out += "null";
     }
     out += ']';
   }
@@ -385,4 +442,4 @@ std::string TableToJson(const arrow::Table& table, int64_t max_rows) {
   return out;
 }
 
-}  // namespace qe
+} // namespace qe

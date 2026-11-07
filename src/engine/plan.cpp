@@ -35,77 +35,84 @@ sql::ExprPtr MakeColumn(std::string name) {
 
 arrow::Result<std::shared_ptr<arrow::DataType>> NaturalLiteralType(const sql::Literal& literal) {
   switch (literal.type) {
-    case sql::LiteralType::Null: return arrow::null();
-    case sql::LiteralType::Integer: return arrow::int64();
-    case sql::LiteralType::Double: return arrow::float64();
-    case sql::LiteralType::String: return arrow::utf8();
-    case sql::LiteralType::Boolean: return arrow::boolean();
+  case sql::LiteralType::Null:
+    return arrow::null();
+  case sql::LiteralType::Integer:
+    return arrow::int64();
+  case sql::LiteralType::Double:
+    return arrow::float64();
+  case sql::LiteralType::String:
+    return arrow::utf8();
+  case sql::LiteralType::Boolean:
+    return arrow::boolean();
   }
   return arrow::Status::Invalid("unsupported literal type");
 }
 
-arrow::Result<std::shared_ptr<arrow::DataType>> InferType(
-    const sql::Expr& expr, const std::shared_ptr<arrow::Schema>& schema) {
+arrow::Result<std::shared_ptr<arrow::DataType>>
+InferType(const sql::Expr& expr, const std::shared_ptr<arrow::Schema>& schema) {
   switch (expr.kind) {
-    case sql::ExprKind::Column: {
-      ARROW_ASSIGN_OR_RAISE(auto name, ResolveColumnName(*schema, expr));
-      int index = schema->GetFieldIndex(name);
-      if (index < 0) return arrow::Status::Invalid("column '" + name + "' not found");
-      return schema->field(index)->type();
-    }
-    case sql::ExprKind::Literal:
-      return NaturalLiteralType(expr.literal);
-    case sql::ExprKind::IsNull:
+  case sql::ExprKind::Column: {
+    ARROW_ASSIGN_OR_RAISE(auto name, ResolveColumnName(*schema, expr));
+    int index = schema->GetFieldIndex(name);
+    if (index < 0)
+      return arrow::Status::Invalid("column '" + name + "' not found");
+    return schema->field(index)->type();
+  }
+  case sql::ExprKind::Literal:
+    return NaturalLiteralType(expr.literal);
+  case sql::ExprKind::IsNull:
+    return arrow::boolean();
+  case sql::ExprKind::Unary:
+    if (expr.unary_op == sql::UnaryOp::Not)
       return arrow::boolean();
-    case sql::ExprKind::Unary:
-      if (expr.unary_op == sql::UnaryOp::Not) return arrow::boolean();
-      return InferType(*expr.left, schema);
-    case sql::ExprKind::Binary: {
-      switch (expr.binary_op) {
-        case sql::BinaryOp::Eq:
-        case sql::BinaryOp::NotEq:
-        case sql::BinaryOp::Lt:
-        case sql::BinaryOp::LtEq:
-        case sql::BinaryOp::Gt:
-        case sql::BinaryOp::GtEq:
-        case sql::BinaryOp::And:
-        case sql::BinaryOp::Or:
-          return arrow::boolean();
-        case sql::BinaryOp::Add:
-        case sql::BinaryOp::Sub:
-        case sql::BinaryOp::Mul:
-        case sql::BinaryOp::Div: {
-          if (expr.binary_op == sql::BinaryOp::Div) {
-            // Like DuckDB (and SQL generally), integer division produces a
-            // double. The expression evaluator coerces both sides to double.
-            return arrow::float64();
-          }
-          ARROW_ASSIGN_OR_RAISE(auto left, InferType(*expr.left, schema));
-          ARROW_ASSIGN_OR_RAISE(auto right, InferType(*expr.right, schema));
-          const bool floating =
-              left->id() == arrow::Type::FLOAT || left->id() == arrow::Type::DOUBLE ||
-              right->id() == arrow::Type::FLOAT || right->id() == arrow::Type::DOUBLE;
-          return floating ? arrow::float64() : arrow::int64();
-        }
+    return InferType(*expr.left, schema);
+  case sql::ExprKind::Binary: {
+    switch (expr.binary_op) {
+    case sql::BinaryOp::Eq:
+    case sql::BinaryOp::NotEq:
+    case sql::BinaryOp::Lt:
+    case sql::BinaryOp::LtEq:
+    case sql::BinaryOp::Gt:
+    case sql::BinaryOp::GtEq:
+    case sql::BinaryOp::And:
+    case sql::BinaryOp::Or:
+      return arrow::boolean();
+    case sql::BinaryOp::Add:
+    case sql::BinaryOp::Sub:
+    case sql::BinaryOp::Mul:
+    case sql::BinaryOp::Div: {
+      if (expr.binary_op == sql::BinaryOp::Div) {
+        // Like DuckDB (and SQL generally), integer division produces a
+        // double. The expression evaluator coerces both sides to double.
+        return arrow::float64();
       }
-      return arrow::Status::Invalid("unsupported binary expression");
+      ARROW_ASSIGN_OR_RAISE(auto left, InferType(*expr.left, schema));
+      ARROW_ASSIGN_OR_RAISE(auto right, InferType(*expr.right, schema));
+      const bool floating = left->id() == arrow::Type::FLOAT || left->id() == arrow::Type::DOUBLE ||
+                            right->id() == arrow::Type::FLOAT || right->id() == arrow::Type::DOUBLE;
+      return floating ? arrow::float64() : arrow::int64();
     }
-    case sql::ExprKind::Aggregate:
-      return arrow::Status::Invalid("aggregate expression was not rewritten");
-    case sql::ExprKind::Star:
-      return arrow::Status::Invalid("star expression was not expanded");
+    }
+    return arrow::Status::Invalid("unsupported binary expression");
+  }
+  case sql::ExprKind::Aggregate:
+    return arrow::Status::Invalid("aggregate expression was not rewritten");
+  case sql::ExprKind::Star:
+    return arrow::Status::Invalid("star expression was not expanded");
   }
   return arrow::Status::Invalid("unsupported expression");
 }
 
-std::shared_ptr<arrow::Schema> MakeQualifiedSchema(
-    const std::string& alias, const std::shared_ptr<arrow::Schema>& file_schema,
-    const std::vector<std::string>& columns) {
+std::shared_ptr<arrow::Schema>
+MakeQualifiedSchema(const std::string& alias, const std::shared_ptr<arrow::Schema>& file_schema,
+                    const std::vector<std::string>& columns) {
   std::vector<std::shared_ptr<arrow::Field>> fields;
   fields.reserve(columns.size());
   for (const std::string& column : columns) {
     int index = file_schema->GetFieldIndex(column);
-    if (index < 0) continue;
+    if (index < 0)
+      continue;
     fields.push_back(arrow::field(alias + "." + file_schema->field(index)->name(),
                                   file_schema->field(index)->type()));
   }
@@ -114,7 +121,8 @@ std::shared_ptr<arrow::Schema> MakeQualifiedSchema(
 
 std::vector<sql::ExprPtr> SplitConjuncts(const sql::ExprPtr& expr) {
   std::vector<sql::ExprPtr> result;
-  if (!expr) return result;
+  if (!expr)
+    return result;
   if (expr->kind == sql::ExprKind::Binary && expr->binary_op == sql::BinaryOp::And) {
     auto left = SplitConjuncts(expr->left);
     auto right = SplitConjuncts(expr->right);
@@ -144,7 +152,8 @@ sql::ExprPtr CombineConjuncts(const std::vector<sql::ExprPtr>& conjuncts) {
 }
 
 std::string TableOf(const sql::Expr& expr) {
-  if (expr.kind != sql::ExprKind::Column) return "";
+  if (expr.kind != sql::ExprKind::Column)
+    return "";
   return expr.table;
 }
 
@@ -156,7 +165,8 @@ struct Binding {
 
 arrow::Result<const arrow::Field*> FindField(const TableInfo& info, const std::string& column) {
   for (int i = 0; i < info.schema->num_fields(); ++i) {
-    if (IEquals(info.schema->field(i)->name(), column)) return info.schema->field(i).get();
+    if (IEquals(info.schema->field(i)->name(), column))
+      return info.schema->field(i).get();
   }
   return arrow::Status::Invalid("column '" + column + "' does not exist in table '" + info.name +
                                 "'");
@@ -164,86 +174,91 @@ arrow::Result<const arrow::Field*> FindField(const TableInfo& info, const std::s
 
 arrow::Result<int> FindBinding(const std::vector<Binding>& bindings, const std::string& alias) {
   for (size_t i = 0; i < bindings.size(); ++i) {
-    if (IEquals(bindings[i].alias, alias)) return static_cast<int>(i);
+    if (IEquals(bindings[i].alias, alias))
+      return static_cast<int>(i);
   }
   return arrow::Status::Invalid("table alias '" + alias + "' is not defined");
 }
 
 arrow::Status ResolveExpression(const sql::ExprPtr& expr, const std::vector<Binding>& bindings,
                                 bool allow_aggregates) {
-  if (!expr) return arrow::Status::OK();
+  if (!expr)
+    return arrow::Status::OK();
 
   switch (expr->kind) {
-    case sql::ExprKind::Column: {
-      int found_binding = -1;
-      std::string found_column;
-      if (!expr->table.empty()) {
-        ARROW_ASSIGN_OR_RAISE(found_binding, FindBinding(bindings, expr->table));
-        ARROW_ASSIGN_OR_RAISE(auto field, FindField(*bindings[found_binding].info, expr->column));
-        found_column = field->name();
-      } else {
+  case sql::ExprKind::Column: {
+    int found_binding = -1;
+    std::string found_column;
+    if (!expr->table.empty()) {
+      ARROW_ASSIGN_OR_RAISE(found_binding, FindBinding(bindings, expr->table));
+      ARROW_ASSIGN_OR_RAISE(auto field, FindField(*bindings[found_binding].info, expr->column));
+      found_column = field->name();
+    } else {
+      for (size_t i = 0; i < bindings.size(); ++i) {
+        for (int j = 0; j < bindings[i].info->schema->num_fields(); ++j) {
+          if (IEquals(bindings[i].info->schema->field(j)->name(), expr->column)) {
+            if (found_binding >= 0) {
+              return arrow::Status::Invalid(
+                  "column '" + expr->column +
+                  "' is ambiguous; qualify it with a table alias (candidates: " +
+                  bindings[found_binding].alias + "." + found_column + ", " + bindings[i].alias +
+                  "." + bindings[i].info->schema->field(j)->name() + ")");
+            }
+            found_binding = static_cast<int>(i);
+            found_column = bindings[i].info->schema->field(j)->name();
+          }
+        }
+      }
+      if (found_binding < 0) {
+        std::ostringstream message;
+        message << "column '" << expr->column << "' does not exist; available columns: ";
         for (size_t i = 0; i < bindings.size(); ++i) {
           for (int j = 0; j < bindings[i].info->schema->num_fields(); ++j) {
-            if (IEquals(bindings[i].info->schema->field(j)->name(), expr->column)) {
-              if (found_binding >= 0) {
-                return arrow::Status::Invalid(
-                    "column '" + expr->column +
-                    "' is ambiguous; qualify it with a table alias (candidates: " +
-                    bindings[found_binding].alias + "." + found_column + ", " +
-                    bindings[i].alias + "." + bindings[i].info->schema->field(j)->name() + ")");
-              }
-              found_binding = static_cast<int>(i);
-              found_column = bindings[i].info->schema->field(j)->name();
-            }
+            if (i || j)
+              message << ", ";
+            message << bindings[i].alias << "." << bindings[i].info->schema->field(j)->name();
           }
         }
-        if (found_binding < 0) {
-          std::ostringstream message;
-          message << "column '" << expr->column << "' does not exist; available columns: ";
-          for (size_t i = 0; i < bindings.size(); ++i) {
-            for (int j = 0; j < bindings[i].info->schema->num_fields(); ++j) {
-              if (i || j) message << ", ";
-              message << bindings[i].alias << "." << bindings[i].info->schema->field(j)->name();
-            }
-          }
-          return arrow::Status::Invalid(message.str());
-        }
+        return arrow::Status::Invalid(message.str());
       }
-      expr->table = bindings[found_binding].alias;
-      expr->column = found_column;
-      return arrow::Status::OK();
     }
-    case sql::ExprKind::Aggregate: {
-      if (!allow_aggregates) {
-        return arrow::Status::Invalid("aggregate function " + expr->function +
-                                      " is not allowed in this clause");
-      }
-      if (expr->argument && ContainsAggregate(expr->argument)) {
-        return arrow::Status::Invalid("nested aggregate functions are not supported");
-      }
-      return ResolveExpression(expr->argument, bindings, false);
+    expr->table = bindings[found_binding].alias;
+    expr->column = found_column;
+    return arrow::Status::OK();
+  }
+  case sql::ExprKind::Aggregate: {
+    if (!allow_aggregates) {
+      return arrow::Status::Invalid("aggregate function " + expr->function +
+                                    " is not allowed in this clause");
     }
-    case sql::ExprKind::Binary:
-      ARROW_RETURN_NOT_OK(ResolveExpression(expr->left, bindings, allow_aggregates));
-      ARROW_RETURN_NOT_OK(ResolveExpression(expr->right, bindings, allow_aggregates));
-      return arrow::Status::OK();
-    case sql::ExprKind::Unary:
-    case sql::ExprKind::IsNull:
-      return ResolveExpression(expr->left, bindings, allow_aggregates);
-    case sql::ExprKind::Literal:
-      return arrow::Status::OK();
-    case sql::ExprKind::Star:
-      return arrow::Status::Invalid("star expression is only valid in a SELECT list");
+    if (expr->argument && ContainsAggregate(expr->argument)) {
+      return arrow::Status::Invalid("nested aggregate functions are not supported");
+    }
+    return ResolveExpression(expr->argument, bindings, false);
+  }
+  case sql::ExprKind::Binary:
+    ARROW_RETURN_NOT_OK(ResolveExpression(expr->left, bindings, allow_aggregates));
+    ARROW_RETURN_NOT_OK(ResolveExpression(expr->right, bindings, allow_aggregates));
+    return arrow::Status::OK();
+  case sql::ExprKind::Unary:
+  case sql::ExprKind::IsNull:
+    return ResolveExpression(expr->left, bindings, allow_aggregates);
+  case sql::ExprKind::Literal:
+    return arrow::Status::OK();
+  case sql::ExprKind::Star:
+    return arrow::Status::Invalid("star expression is only valid in a SELECT list");
   }
   return arrow::Status::Invalid("unsupported expression");
 }
 
 void CollectAggregates(const sql::ExprPtr& expr, std::vector<sql::ExprPtr>& out) {
-  if (!expr) return;
+  if (!expr)
+    return;
   if (expr->kind == sql::ExprKind::Aggregate) {
     std::string canonical = CanonicalExpression(*expr);
     for (const auto& existing : out) {
-      if (CanonicalExpression(*existing) == canonical) return;
+      if (CanonicalExpression(*existing) == canonical)
+        return;
     }
     out.push_back(expr);
     return;
@@ -275,7 +290,8 @@ arrow::Status ValidateGroupedExpression(const sql::ExprPtr& expr,
   if (expr->kind == sql::ExprKind::Aggregate) {
     return ValidateAggregate(*expr);
   }
-  if (expr->kind == sql::ExprKind::Literal) return arrow::Status::OK();
+  if (expr->kind == sql::ExprKind::Literal)
+    return arrow::Status::OK();
   if (expr->kind == sql::ExprKind::Column) {
     if (!group_canonicals.contains(CanonicalExpression(*expr))) {
       return arrow::Status::Invalid("column " + CanonicalExpression(*expr) +
@@ -296,41 +312,44 @@ sql::ExprPtr RewriteGroupedExpression(const sql::ExprPtr& expr,
                                       const std::set<std::string>& group_names) {
   if (expr->kind == sql::ExprKind::Aggregate) {
     std::string name = CanonicalExpression(*expr);
-    if (!aggregate_names.contains(name)) return nullptr;
+    if (!aggregate_names.contains(name))
+      return nullptr;
     return MakeColumn(name);
   }
   if (expr->kind == sql::ExprKind::Column) {
     std::string name = CanonicalExpression(*expr);
-    if (!group_names.contains(name)) return nullptr;
+    if (!group_names.contains(name))
+      return nullptr;
     return MakeColumn(name);
   }
-  if (expr->kind == sql::ExprKind::Literal) return expr;
+  if (expr->kind == sql::ExprKind::Literal)
+    return expr;
   return nullptr;
 }
 
 arrow::Status ValidateHavingExpression(const sql::ExprPtr& expr,
                                        const std::set<std::string>& group_names) {
-  if (!expr) return arrow::Status::OK();
+  if (!expr)
+    return arrow::Status::OK();
   switch (expr->kind) {
-    case sql::ExprKind::Aggregate:
-      return ValidateAggregate(*expr);
-    case sql::ExprKind::Column:
-      if (!group_names.contains(CanonicalExpression(*expr))) {
-        return arrow::Status::Invalid(
-            "HAVING column " + CanonicalExpression(*expr) +
-            " must appear in GROUP BY or be used in an aggregate function");
-      }
-      return arrow::Status::OK();
-    case sql::ExprKind::Literal:
-      return arrow::Status::OK();
-    case sql::ExprKind::Binary:
-      ARROW_RETURN_NOT_OK(ValidateHavingExpression(expr->left, group_names));
-      return ValidateHavingExpression(expr->right, group_names);
-    case sql::ExprKind::Unary:
-    case sql::ExprKind::IsNull:
-      return ValidateHavingExpression(expr->left, group_names);
-    case sql::ExprKind::Star:
-      return arrow::Status::Invalid("star expression is only valid in a SELECT list");
+  case sql::ExprKind::Aggregate:
+    return ValidateAggregate(*expr);
+  case sql::ExprKind::Column:
+    if (!group_names.contains(CanonicalExpression(*expr))) {
+      return arrow::Status::Invalid("HAVING column " + CanonicalExpression(*expr) +
+                                    " must appear in GROUP BY or be used in an aggregate function");
+    }
+    return arrow::Status::OK();
+  case sql::ExprKind::Literal:
+    return arrow::Status::OK();
+  case sql::ExprKind::Binary:
+    ARROW_RETURN_NOT_OK(ValidateHavingExpression(expr->left, group_names));
+    return ValidateHavingExpression(expr->right, group_names);
+  case sql::ExprKind::Unary:
+  case sql::ExprKind::IsNull:
+    return ValidateHavingExpression(expr->left, group_names);
+  case sql::ExprKind::Star:
+    return arrow::Status::Invalid("star expression is only valid in a SELECT list");
   }
   return arrow::Status::Invalid("unsupported HAVING expression");
 }
@@ -338,22 +357,27 @@ arrow::Status ValidateHavingExpression(const sql::ExprPtr& expr,
 sql::ExprPtr RewriteGroupedExpressionDeep(const sql::ExprPtr& expr,
                                           const std::set<std::string>& aggregate_names,
                                           const std::set<std::string>& group_names) {
-  if (!expr) return nullptr;
+  if (!expr)
+    return nullptr;
   if (expr->kind == sql::ExprKind::Aggregate) {
     std::string name = CanonicalExpression(*expr);
-    if (!aggregate_names.contains(name)) return nullptr;
+    if (!aggregate_names.contains(name))
+      return nullptr;
     return MakeColumn(name);
   }
   if (expr->kind == sql::ExprKind::Column) {
     std::string name = CanonicalExpression(*expr);
-    if (!group_names.contains(name)) return nullptr;
+    if (!group_names.contains(name))
+      return nullptr;
     return MakeColumn(name);
   }
-  if (expr->kind == sql::ExprKind::Literal) return expr;
+  if (expr->kind == sql::ExprKind::Literal)
+    return expr;
   if (expr->kind == sql::ExprKind::Binary) {
     auto left = RewriteGroupedExpressionDeep(expr->left, aggregate_names, group_names);
     auto right = RewriteGroupedExpressionDeep(expr->right, aggregate_names, group_names);
-    if (!left || !right) return nullptr;
+    if (!left || !right)
+      return nullptr;
     auto result = std::make_shared<sql::Expr>();
     result->kind = sql::ExprKind::Binary;
     result->binary_op = expr->binary_op;
@@ -363,7 +387,8 @@ sql::ExprPtr RewriteGroupedExpressionDeep(const sql::ExprPtr& expr,
   }
   if (expr->kind == sql::ExprKind::Unary) {
     auto left = RewriteGroupedExpressionDeep(expr->left, aggregate_names, group_names);
-    if (!left) return nullptr;
+    if (!left)
+      return nullptr;
     auto result = std::make_shared<sql::Expr>();
     result->kind = sql::ExprKind::Unary;
     result->unary_op = expr->unary_op;
@@ -372,7 +397,8 @@ sql::ExprPtr RewriteGroupedExpressionDeep(const sql::ExprPtr& expr,
   }
   if (expr->kind == sql::ExprKind::IsNull) {
     auto left = RewriteGroupedExpressionDeep(expr->left, aggregate_names, group_names);
-    if (!left) return nullptr;
+    if (!left)
+      return nullptr;
     auto result = std::make_shared<sql::Expr>();
     result->kind = sql::ExprKind::IsNull;
     result->left = std::move(left);
@@ -383,28 +409,32 @@ sql::ExprPtr RewriteGroupedExpressionDeep(const sql::ExprPtr& expr,
 
 arrow::Result<std::shared_ptr<arrow::DataType>> AggregateResultType(const sql::Expr& aggregate,
                                                                     const arrow::Schema& input) {
-  if (aggregate.function == "count") return arrow::int64();
+  if (aggregate.function == "count")
+    return arrow::int64();
   if (!aggregate.argument) {
     return arrow::Status::Invalid("aggregate function requires an argument");
   }
   ARROW_ASSIGN_OR_RAISE(auto name, ResolveColumnName(input, *aggregate.argument));
   int index = input.GetFieldIndex(name);
-  if (index < 0) return arrow::Status::Invalid("aggregate argument column not found");
+  if (index < 0)
+    return arrow::Status::Invalid("aggregate argument column not found");
   auto type = input.field(index)->type();
-  const bool integer =
-      type->id() == arrow::Type::INT8 || type->id() == arrow::Type::INT16 ||
-      type->id() == arrow::Type::INT32 || type->id() == arrow::Type::INT64 ||
-      type->id() == arrow::Type::UINT8 || type->id() == arrow::Type::UINT16 ||
-      type->id() == arrow::Type::UINT32 || type->id() == arrow::Type::UINT64;
+  const bool integer = type->id() == arrow::Type::INT8 || type->id() == arrow::Type::INT16 ||
+                       type->id() == arrow::Type::INT32 || type->id() == arrow::Type::INT64 ||
+                       type->id() == arrow::Type::UINT8 || type->id() == arrow::Type::UINT16 ||
+                       type->id() == arrow::Type::UINT32 || type->id() == arrow::Type::UINT64;
   const bool floating = type->id() == arrow::Type::FLOAT || type->id() == arrow::Type::DOUBLE;
 
   if (aggregate.function == "sum") {
-    if (integer) return arrow::int64();
-    if (floating) return arrow::float64();
+    if (integer)
+      return arrow::int64();
+    if (floating)
+      return arrow::float64();
     return arrow::Status::Invalid("SUM requires a numeric column, got " + type->ToString());
   }
   if (aggregate.function == "avg") {
-    if (integer || floating) return arrow::float64();
+    if (integer || floating)
+      return arrow::float64();
     return arrow::Status::Invalid("AVG requires a numeric column, got " + type->ToString());
   }
   if (aggregate.function == "min" || aggregate.function == "max") {
@@ -420,26 +450,33 @@ struct ResolvedItem {
 
 std::shared_ptr<LogicalPlan> FindScan(const std::shared_ptr<LogicalPlan>& node,
                                       const std::string& alias) {
-  if (!node) return nullptr;
-  if (node->kind == LogicalPlan::Kind::Scan && IEquals(node->table_alias, alias)) return node;
+  if (!node)
+    return nullptr;
+  if (node->kind == LogicalPlan::Kind::Scan && IEquals(node->table_alias, alias))
+    return node;
   for (const auto& child : node->children) {
     auto found = FindScan(child, alias);
-    if (found) return found;
+    if (found)
+      return found;
   }
   return nullptr;
 }
 
 bool HasOuterJoin(const std::shared_ptr<LogicalPlan>& node) {
-  if (!node) return false;
-  if (node->kind == LogicalPlan::Kind::Join && node->left_outer) return true;
+  if (!node)
+    return false;
+  if (node->kind == LogicalPlan::Kind::Join && node->left_outer)
+    return true;
   for (const auto& child : node->children) {
-    if (HasOuterJoin(child)) return true;
+    if (HasOuterJoin(child))
+      return true;
   }
   return false;
 }
 
 arrow::Status PushdownFilters(std::shared_ptr<LogicalPlan>& node) {
-  if (!node) return arrow::Status::OK();
+  if (!node)
+    return arrow::Status::OK();
   for (auto& child : node->children) {
     ARROW_RETURN_NOT_OK(PushdownFilters(child));
   }
@@ -460,7 +497,8 @@ arrow::Status PushdownFilters(std::shared_ptr<LogicalPlan>& node) {
     std::set<std::string> aliases;
     for (const std::string& ref : refs) {
       auto dot = ref.find('.');
-      if (dot != std::string::npos) aliases.insert(ToLower(ref.substr(0, dot)));
+      if (dot != std::string::npos)
+        aliases.insert(ToLower(ref.substr(0, dot)));
     }
     if (aliases.size() == 1) {
       auto scan = FindScan(node->children[0], *aliases.begin());
@@ -481,41 +519,49 @@ arrow::Status PushdownFilters(std::shared_ptr<LogicalPlan>& node) {
 }
 
 void CollectPlanRefs(const std::shared_ptr<LogicalPlan>& node, std::set<std::string>& refs) {
-  if (!node) return;
+  if (!node)
+    return;
   switch (node->kind) {
-    case LogicalPlan::Kind::Scan:
-      for (const auto& filter : node->pushed_filters) CollectColumnRefs(filter, refs);
-      break;
-    case LogicalPlan::Kind::Filter:
-      CollectColumnRefs(node->predicate, refs);
-      break;
-    case LogicalPlan::Kind::Join:
-      for (const auto& condition : node->join_conditions) {
-        CollectColumnRefs(condition.left, refs);
-        CollectColumnRefs(condition.right, refs);
-      }
-      break;
-    case LogicalPlan::Kind::Aggregate:
-      for (const auto& expr : node->group_by) CollectColumnRefs(expr, refs);
-      for (const auto& expr : node->aggregates) CollectColumnRefs(expr->argument, refs);
-      break;
-    case LogicalPlan::Kind::Project:
-      for (const auto& expr : node->projections) CollectColumnRefs(expr, refs);
-      break;
-    case LogicalPlan::Kind::Sort:
-      for (const auto& key : node->sort_keys) CollectColumnRefs(key.expression, refs);
-      break;
-    case LogicalPlan::Kind::Distinct:
-      break;
-    case LogicalPlan::Kind::Limit:
-      break;
+  case LogicalPlan::Kind::Scan:
+    for (const auto& filter : node->pushed_filters)
+      CollectColumnRefs(filter, refs);
+    break;
+  case LogicalPlan::Kind::Filter:
+    CollectColumnRefs(node->predicate, refs);
+    break;
+  case LogicalPlan::Kind::Join:
+    for (const auto& condition : node->join_conditions) {
+      CollectColumnRefs(condition.left, refs);
+      CollectColumnRefs(condition.right, refs);
+    }
+    break;
+  case LogicalPlan::Kind::Aggregate:
+    for (const auto& expr : node->group_by)
+      CollectColumnRefs(expr, refs);
+    for (const auto& expr : node->aggregates)
+      CollectColumnRefs(expr->argument, refs);
+    break;
+  case LogicalPlan::Kind::Project:
+    for (const auto& expr : node->projections)
+      CollectColumnRefs(expr, refs);
+    break;
+  case LogicalPlan::Kind::Sort:
+    for (const auto& key : node->sort_keys)
+      CollectColumnRefs(key.expression, refs);
+    break;
+  case LogicalPlan::Kind::Distinct:
+    break;
+  case LogicalPlan::Kind::Limit:
+    break;
   }
-  for (const auto& child : node->children) CollectPlanRefs(child, refs);
+  for (const auto& child : node->children)
+    CollectPlanRefs(child, refs);
 }
 
-arrow::Status PruneNode(const std::shared_ptr<LogicalPlan>& node,
-                        const std::set<std::string>& refs, bool allow_empty_scan) {
-  if (!node) return arrow::Status::OK();
+arrow::Status PruneNode(const std::shared_ptr<LogicalPlan>& node, const std::set<std::string>& refs,
+                        bool allow_empty_scan) {
+  if (!node)
+    return arrow::Status::OK();
   if (node->kind == LogicalPlan::Kind::Scan) {
     std::vector<std::string> columns;
     for (int i = 0; i < node->file_schema->num_fields(); ++i) {
@@ -542,10 +588,13 @@ arrow::Status PruneNode(const std::shared_ptr<LogicalPlan>& node,
 }
 
 bool HasResidualFilter(const std::shared_ptr<LogicalPlan>& node) {
-  if (!node) return false;
-  if (node->kind == LogicalPlan::Kind::Filter && node->predicate) return true;
+  if (!node)
+    return false;
+  if (node->kind == LogicalPlan::Kind::Filter && node->predicate)
+    return true;
   for (const auto& child : node->children) {
-    if (HasResidualFilter(child)) return true;
+    if (HasResidualFilter(child))
+      return true;
   }
   return false;
 }
@@ -557,34 +606,35 @@ arrow::Status PruneColumns(const std::shared_ptr<LogicalPlan>& root) {
 }
 
 arrow::Status RebuildSchemas(const std::shared_ptr<LogicalPlan>& node) {
-  if (!node) return arrow::Status::OK();
+  if (!node)
+    return arrow::Status::OK();
   for (const auto& child : node->children) {
     ARROW_RETURN_NOT_OK(RebuildSchemas(child));
   }
   switch (node->kind) {
-    case LogicalPlan::Kind::Scan:
-      node->schema = MakeQualifiedSchema(node->table_alias, node->file_schema, node->scan_columns);
-      break;
-    case LogicalPlan::Kind::Filter:
-    case LogicalPlan::Kind::Distinct:
-    case LogicalPlan::Kind::Sort:
-    case LogicalPlan::Kind::Limit:
-      node->schema = node->children[0]->schema;
-      break;
-    case LogicalPlan::Kind::Join: {
-      std::vector<std::shared_ptr<arrow::Field>> fields;
-      for (const auto& child : node->children) {
-        for (int i = 0; i < child->schema->num_fields(); ++i) {
-          fields.push_back(child->schema->field(i));
-        }
+  case LogicalPlan::Kind::Scan:
+    node->schema = MakeQualifiedSchema(node->table_alias, node->file_schema, node->scan_columns);
+    break;
+  case LogicalPlan::Kind::Filter:
+  case LogicalPlan::Kind::Distinct:
+  case LogicalPlan::Kind::Sort:
+  case LogicalPlan::Kind::Limit:
+    node->schema = node->children[0]->schema;
+    break;
+  case LogicalPlan::Kind::Join: {
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    for (const auto& child : node->children) {
+      for (int i = 0; i < child->schema->num_fields(); ++i) {
+        fields.push_back(child->schema->field(i));
       }
-      node->schema = arrow::schema(std::move(fields));
-      break;
     }
-    case LogicalPlan::Kind::Aggregate:
-    case LogicalPlan::Kind::Project:
-      // These schemas are built during planning and are independent of pruning.
-      break;
+    node->schema = arrow::schema(std::move(fields));
+    break;
+  }
+  case LogicalPlan::Kind::Aggregate:
+  case LogicalPlan::Kind::Project:
+    // These schemas are built during planning and are independent of pruning.
+    break;
   }
   return arrow::Status::OK();
 }
@@ -592,81 +642,90 @@ arrow::Status RebuildSchemas(const std::shared_ptr<LogicalPlan>& node) {
 void ExplainNode(const std::shared_ptr<LogicalPlan>& node, int depth, std::ostringstream& out) {
   out << std::string(static_cast<size_t>(depth) * 2, ' ');
   switch (node->kind) {
-    case LogicalPlan::Kind::Scan: {
-      out << "Scan " << node->table_alias << " (" << node->table_name << ")";
-      out << " columns=[";
-      for (size_t i = 0; i < node->scan_columns.size(); ++i) {
-        if (i) out << ", ";
-        out << node->scan_columns[i];
-      }
-      out << "] rows=" << node->estimated_rows;
-      if (!node->pushed_filters.empty()) {
-        out << " pushdown=[";
-        for (size_t i = 0; i < node->pushed_filters.size(); ++i) {
-          if (i) out << ", ";
-          out << sql::ExprToString(node->pushed_filters[i]);
-        }
-        out << "]";
-      }
-      break;
+  case LogicalPlan::Kind::Scan: {
+    out << "Scan " << node->table_alias << " (" << node->table_name << ")";
+    out << " columns=[";
+    for (size_t i = 0; i < node->scan_columns.size(); ++i) {
+      if (i)
+        out << ", ";
+      out << node->scan_columns[i];
     }
-    case LogicalPlan::Kind::Filter:
-      out << "Filter " << sql::ExprToString(node->predicate);
-      break;
-    case LogicalPlan::Kind::Join: {
-      out << (node->left_outer ? "LeftJoin" : "Join") << " on [";
-      for (size_t i = 0; i < node->join_conditions.size(); ++i) {
-        if (i) out << ", ";
-        out << sql::ExprToString(node->join_conditions[i].left) << " = "
-            << sql::ExprToString(node->join_conditions[i].right);
+    out << "] rows=" << node->estimated_rows;
+    if (!node->pushed_filters.empty()) {
+      out << " pushdown=[";
+      for (size_t i = 0; i < node->pushed_filters.size(); ++i) {
+        if (i)
+          out << ", ";
+        out << sql::ExprToString(node->pushed_filters[i]);
       }
       out << "]";
-      break;
     }
-    case LogicalPlan::Kind::Aggregate: {
-      out << "Aggregate group=[";
-      for (size_t i = 0; i < node->group_by.size(); ++i) {
-        if (i) out << ", ";
-        out << sql::ExprToString(node->group_by[i]);
-      }
-      out << "] aggregates=[";
-      for (size_t i = 0; i < node->aggregates.size(); ++i) {
-        if (i) out << ", ";
-        out << sql::ExprToString(node->aggregates[i]);
-      }
-      out << "]";
-      break;
+    break;
+  }
+  case LogicalPlan::Kind::Filter:
+    out << "Filter " << sql::ExprToString(node->predicate);
+    break;
+  case LogicalPlan::Kind::Join: {
+    out << (node->left_outer ? "LeftJoin" : "Join") << " on [";
+    for (size_t i = 0; i < node->join_conditions.size(); ++i) {
+      if (i)
+        out << ", ";
+      out << sql::ExprToString(node->join_conditions[i].left) << " = "
+          << sql::ExprToString(node->join_conditions[i].right);
     }
-    case LogicalPlan::Kind::Project:
-      out << "Project [";
-      for (size_t i = 0; i < node->output_names.size(); ++i) {
-        if (i) out << ", ";
-        out << node->output_names[i];
-      }
-      out << "]";
-      break;
-    case LogicalPlan::Kind::Distinct:
-      out << "Distinct";
-      break;
-    case LogicalPlan::Kind::Sort:
-      out << "Sort [";
-      for (size_t i = 0; i < node->sort_keys.size(); ++i) {
-        if (i) out << ", ";
-        out << sql::ExprToString(node->sort_keys[i].expression)
-            << (node->sort_keys[i].descending ? " DESC" : " ASC");
-      }
-      out << "]";
-      break;
-    case LogicalPlan::Kind::Limit:
-      out << "Limit " << node->limit;
-      if (node->offset > 0) out << " offset=" << node->offset;
-      break;
+    out << "]";
+    break;
+  }
+  case LogicalPlan::Kind::Aggregate: {
+    out << "Aggregate group=[";
+    for (size_t i = 0; i < node->group_by.size(); ++i) {
+      if (i)
+        out << ", ";
+      out << sql::ExprToString(node->group_by[i]);
+    }
+    out << "] aggregates=[";
+    for (size_t i = 0; i < node->aggregates.size(); ++i) {
+      if (i)
+        out << ", ";
+      out << sql::ExprToString(node->aggregates[i]);
+    }
+    out << "]";
+    break;
+  }
+  case LogicalPlan::Kind::Project:
+    out << "Project [";
+    for (size_t i = 0; i < node->output_names.size(); ++i) {
+      if (i)
+        out << ", ";
+      out << node->output_names[i];
+    }
+    out << "]";
+    break;
+  case LogicalPlan::Kind::Distinct:
+    out << "Distinct";
+    break;
+  case LogicalPlan::Kind::Sort:
+    out << "Sort [";
+    for (size_t i = 0; i < node->sort_keys.size(); ++i) {
+      if (i)
+        out << ", ";
+      out << sql::ExprToString(node->sort_keys[i].expression)
+          << (node->sort_keys[i].descending ? " DESC" : " ASC");
+    }
+    out << "]";
+    break;
+  case LogicalPlan::Kind::Limit:
+    out << "Limit " << node->limit;
+    if (node->offset > 0)
+      out << " offset=" << node->offset;
+    break;
   }
   out << "\n";
-  for (const auto& child : node->children) ExplainNode(child, depth + 1, out);
+  for (const auto& child : node->children)
+    ExplainNode(child, depth + 1, out);
 }
 
-}  // namespace
+} // namespace
 
 arrow::Status Catalog::AddFile(const std::string& name, const std::string& path) {
   if (Find(name)) {
@@ -684,11 +743,14 @@ arrow::Status Catalog::AddFile(const std::string& name, const std::string& path)
   return arrow::Status::OK();
 }
 
-void Catalog::Add(TableInfo info) { tables_.push_back(std::move(info)); }
+void Catalog::Add(TableInfo info) {
+  tables_.push_back(std::move(info));
+}
 
 const TableInfo* Catalog::Find(const std::string& name) const {
   for (const auto& table : tables_) {
-    if (IEquals(table.name, name)) return &table;
+    if (IEquals(table.name, name))
+      return &table;
   }
   return nullptr;
 }
@@ -702,7 +764,8 @@ arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catal
       std::ostringstream message;
       message << "table '" << ref.name << "' is not registered; available tables: ";
       for (size_t i = 0; i < catalog.tables().size(); ++i) {
-        if (i) message << ", ";
+        if (i)
+          message << ", ";
         message << catalog.tables()[i].name;
       }
       return arrow::Status::Invalid(message.str());
@@ -799,9 +862,8 @@ arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catal
     sql::ExprPtr resolved = expr;
     ARROW_RETURN_NOT_OK(ResolveExpression(resolved, bindings, false));
     if (resolved->kind != sql::ExprKind::Column) {
-      return arrow::Status::Invalid(
-          "GROUP BY supports plain columns only; expression " +
-          CanonicalExpression(*resolved) + " is not supported");
+      return arrow::Status::Invalid("GROUP BY supports plain columns only; expression " +
+                                    CanonicalExpression(*resolved) + " is not supported");
     }
     std::string canonical = CanonicalExpression(*resolved);
     if (group_canonicals.insert(canonical).second) {
@@ -847,15 +909,13 @@ arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catal
     sql::ExprPtr on = statement.joins[i].on;
     ARROW_RETURN_NOT_OK(ResolveExpression(on, bindings, false));
     for (const auto& conjunct : SplitConjuncts(on)) {
-      if (conjunct->kind != sql::ExprKind::Binary ||
-          conjunct->binary_op != sql::BinaryOp::Eq) {
+      if (conjunct->kind != sql::ExprKind::Binary || conjunct->binary_op != sql::BinaryOp::Eq) {
         return arrow::Status::Invalid(
             "join conditions must be equality comparisons combined with AND");
       }
       if (conjunct->left->kind != sql::ExprKind::Column ||
           conjunct->right->kind != sql::ExprKind::Column) {
-        return arrow::Status::Invalid(
-            "join conditions must compare two plain columns");
+        return arrow::Status::Invalid("join conditions must compare two plain columns");
       }
       const std::string right_alias = bindings[i + 1].alias;
       sql::ExprPtr left = conjunct->left;
@@ -867,7 +927,8 @@ arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catal
             "each join condition must compare a column from the new table with a column from a "
             "previous table");
       }
-      if (left_is_right) std::swap(left, right);
+      if (left_is_right)
+        std::swap(left, right);
       join_conditions[i].push_back(JoinCondition{left, right});
     }
     if (join_conditions[i].empty()) {
@@ -879,9 +940,8 @@ arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catal
       !group_by.empty() || statement.having != nullptr ||
       std::any_of(items.begin(), items.end(),
                   [](const ResolvedItem& item) { return ContainsAggregate(item.expr); }) ||
-      std::any_of(order_expressions.begin(), order_expressions.end(), [](const sql::ExprPtr& expr) {
-        return ContainsAggregate(expr);
-      });
+      std::any_of(order_expressions.begin(), order_expressions.end(),
+                  [](const sql::ExprPtr& expr) { return ContainsAggregate(expr); });
 
   std::vector<sql::ExprPtr> aggregates;
   std::set<std::string> aggregate_canonicals;
@@ -890,14 +950,18 @@ arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catal
       ARROW_RETURN_NOT_OK(ValidateGroupedExpression(item.expr, group_canonicals));
     }
     for (const auto& expr : order_expressions) {
-      if (expr) ARROW_RETURN_NOT_OK(ValidateGroupedExpression(expr, group_canonicals));
+      if (expr)
+        ARROW_RETURN_NOT_OK(ValidateGroupedExpression(expr, group_canonicals));
     }
     if (statement.having) {
       ARROW_RETURN_NOT_OK(ValidateHavingExpression(statement.having, group_canonicals));
     }
-    for (const auto& item : items) CollectAggregates(item.expr, aggregates);
-    for (const auto& expr : order_expressions) CollectAggregates(expr, aggregates);
-    if (statement.having) CollectAggregates(statement.having, aggregates);
+    for (const auto& item : items)
+      CollectAggregates(item.expr, aggregates);
+    for (const auto& expr : order_expressions)
+      CollectAggregates(expr, aggregates);
+    if (statement.having)
+      CollectAggregates(statement.having, aggregates);
     for (const auto& aggregate : aggregates) {
       ARROW_RETURN_NOT_OK(ValidateAggregate(*aggregate));
       aggregate_canonicals.insert(CanonicalExpression(*aggregate));
@@ -962,12 +1026,12 @@ arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catal
     current = aggregate;
 
     if (statement.having) {
-      auto predicate = RewriteGroupedExpressionDeep(statement.having, aggregate_canonicals,
-                                                     group_canonicals);
+      auto predicate =
+          RewriteGroupedExpressionDeep(statement.having, aggregate_canonicals, group_canonicals);
       if (!predicate) {
-        return arrow::Status::Invalid(
-            "HAVING expression " + CanonicalExpression(*statement.having) +
-            " must be a combination of group columns and aggregates");
+        return arrow::Status::Invalid("HAVING expression " +
+                                      CanonicalExpression(*statement.having) +
+                                      " must be a combination of group columns and aggregates");
       }
       auto filter = std::make_shared<LogicalPlan>();
       filter->kind = LogicalPlan::Kind::Filter;
@@ -1185,4 +1249,4 @@ arrow::Result<QueryPlan> PlanQuery(const sql::SelectStmt& statement, const Catal
   return result;
 }
 
-}  // namespace qe
+} // namespace qe

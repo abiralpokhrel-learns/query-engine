@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -23,10 +24,11 @@ import duckdb
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "build" / "qe-cli"
+BINARY = Path(os.environ.get("QE_CLI", str(ROOT / "build" / "qe-cli")))
 
 sys.path.insert(0, str(ROOT / "scripts"))
 from fuzz_compare import generate_queries  # noqa: E402
+
 TABLE_NAMES = [
     "sales",
     "customers",
@@ -89,7 +91,7 @@ def conn(data_dir: Path):
     con = duckdb.connect()
     for name in TABLE_NAMES:
         path = (data_dir / f"{name}.parquet").as_posix()
-        con.execute(f'CREATE VIEW "{name}" AS SELECT * FROM read_parquet(\'{path}\')')
+        con.execute(f"CREATE VIEW \"{name}\" AS SELECT * FROM read_parquet('{path}')")
     yield con
     con.close()
 
@@ -213,8 +215,7 @@ CORRECTNESS_QUERIES = [
     "SELECT MIN(label), MAX(label), MIN(day), MAX(day) FROM edge_cases",
     "SELECT region, COUNT(*), SUM(quantity), AVG(quantity), MIN(unit_price), MAX(amount) "
     "FROM sales GROUP BY region ORDER BY region",
-    "SELECT region, COUNT(*) FROM sales WHERE status = 'completed' GROUP BY region "
-    "ORDER BY region",
+    "SELECT region, COUNT(*) FROM sales WHERE status = 'completed' GROUP BY region ORDER BY region",
     "SELECT region, COUNT(*) AS n FROM sales GROUP BY region ORDER BY n DESC, region LIMIT 3",
     "SELECT category, COUNT(*), SUM(amount), AVG(amount), MIN(quantity), MAX(amount) "
     "FROM edge_cases GROUP BY category ORDER BY category",
@@ -253,8 +254,7 @@ CORRECTNESS_QUERIES = [
     # Dates.
     "SELECT COUNT(*), SUM(amount) FROM sales "
     "WHERE sale_date >= '2024-03-01' AND sale_date < '2024-04-01'",
-    "SELECT sale_id, sale_date FROM sales WHERE sale_date < '2024-01-02' "
-    "ORDER BY sale_id LIMIT 5",
+    "SELECT sale_id, sale_date FROM sales WHERE sale_date < '2024-01-02' ORDER BY sale_id LIMIT 5",
     "SELECT COUNT(*) FROM sales WHERE sale_date = '2024-03-01'",
     "SELECT COUNT(*) FROM sales WHERE sale_date > '2026-12-30'",
     "SELECT id, day FROM edge_cases WHERE day = '2024-02-29' ORDER BY id",
@@ -283,8 +283,7 @@ CORRECTNESS_QUERIES = [
     "SELECT p.category, COUNT(*), AVG(s.amount) FROM sales s "
     "JOIN products p ON s.product_id = p.product_id "
     "WHERE s.sale_date < '2024-02-01' GROUP BY p.category ORDER BY p.category",
-    "SELECT l.id, r.id FROM edge_left l JOIN edge_right r ON l.id = r.id "
-    "ORDER BY l.id, r.id",
+    "SELECT l.id, r.id FROM edge_left l JOIN edge_right r ON l.id = r.id ORDER BY l.id, r.id",
     # LEFT JOIN.
     "SELECT l.id, l.left_value, r.right_value FROM edge_left l "
     "LEFT JOIN edge_right r ON l.id = r.id ORDER BY l.id, r.right_value",
@@ -312,8 +311,8 @@ CORRECTNESS_QUERIES = [
     "SELECT amount * 2 AS double_amount FROM edge_cases WHERE id = 1",
     "SELECT region AS r, SUM(amount) AS total FROM sales GROUP BY region "
     "ORDER BY total DESC LIMIT 3",
-    "SELECT e.id AS \"the id\", e.label AS \"the label\" FROM edge_cases e "
-    "WHERE e.id <= 2 ORDER BY \"the id\"",
+    'SELECT e.id AS "the id", e.label AS "the label" FROM edge_cases e '
+    'WHERE e.id <= 2 ORDER BY "the id"',
 ]
 
 # Deterministic differential-fuzz queries. The standalone harness can run a
@@ -498,10 +497,14 @@ def test_cli_usage_errors() -> None:
         ([str(BINARY)], "no Parquet input"),
         ([str(BINARY), "--table", "t=x.parquet"], "no SQL query"),
         ([str(BINARY), "--table", "bad", "--query", "SELECT 1"], "NAME=PATH"),
-        ([str(BINARY), "--table", "sales=x.parquet", "--query", "SELECT 1", "--format", "xml"],
-         "--format"),
-        ([str(BINARY), "--table", "sales=x.parquet", "--query", "SELECT 1", "--batch-size", "0"],
-         "--batch-size"),
+        (
+            [str(BINARY), "--table", "sales=x.parquet", "--query", "SELECT 1", "--format", "xml"],
+            "--format",
+        ),
+        (
+            [str(BINARY), "--table", "sales=x.parquet", "--query", "SELECT 1", "--batch-size", "0"],
+            "--batch-size",
+        ),
     ]
     for args, fragment in cases:
         completed = subprocess.run(args, capture_output=True, text=True)

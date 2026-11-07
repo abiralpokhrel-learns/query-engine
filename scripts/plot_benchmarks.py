@@ -51,13 +51,21 @@ def main() -> int:
     ax_time.legend(frameon=False)
     for position, value in zip(positions - width / 2, cpu):
         ax_time.annotate(
-            f"{value:.1f}", (position, value), textcoords="offset points",
-            xytext=(0, 3), ha="center", fontsize=8
+            f"{value:.1f}",
+            (position, value),
+            textcoords="offset points",
+            xytext=(0, 3),
+            ha="center",
+            fontsize=8,
         )
     for position, value in zip(positions + width / 2, duck):
         ax_time.annotate(
-            f"{value:.1f}", (position, value), textcoords="offset points",
-            xytext=(0, 3), ha="center", fontsize=8
+            f"{value:.1f}",
+            (position, value),
+            textcoords="offset points",
+            xytext=(0, 3),
+            ha="center",
+            fontsize=8,
         )
 
     colors = ["#2f8f5b" if value < 1.0 else "#b44a4a" for value in ratio]
@@ -71,8 +79,12 @@ def main() -> int:
     ax_ratio.grid(axis="x", alpha=0.25)
     for position, value in zip(positions, ratio):
         ax_ratio.annotate(
-            f"{value:.2f}x", (value, position), textcoords="offset points",
-            xytext=(4, 0), va="center", fontsize=8
+            f"{value:.2f}x",
+            (value, position),
+            textcoords="offset points",
+            xytext=(4, 0),
+            va="center",
+            fontsize=8,
         )
 
     sales = results["dataset"]["tables"]["sales"]
