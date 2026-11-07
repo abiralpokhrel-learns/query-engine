@@ -1,0 +1,63 @@
+name: Feature request
+description: Propose a SQL feature, optimization, or developer-experience improvement.
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `qe` deliberately supports a bounded SQL subset. Please explain why the
+        feature matters and whether it belongs in the documented version 2 plan.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today, and who is affected?
+      placeholder: Describe the concrete use case rather than only the proposed syntax.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include example SQL and expected output where possible.
+      render: sql
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Could this be expressed with the current subset, or deferred to a later version?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - SQL parser
+        - Planner
+        - Storage / Parquet
+        - Execution operator
+        - CLI / output
+        - Tests / fuzzing
+        - Benchmarks
+        - Documentation
+        - Developer tooling
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and the version 2 plan in the engineering write-up.
+          required: true
+        - label: I understand that unsupported SQL is rejected rather than silently approximated.
+          required: true
+        - label: This request does not rely on fabricated benchmark or GPU numbers.
+          required: true

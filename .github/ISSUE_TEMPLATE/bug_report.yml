@@ -1,0 +1,88 @@
+name: Bug report
+description: Report a correctness, CLI, build, or performance problem.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping make `qe` more reliable. Please include enough detail
+        to reproduce the problem against a fresh checkout.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and why is it wrong?
+      placeholder: A concise description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Exact commands, SQL, and data needed to reproduce the issue.
+      render: shell
+      placeholder: |
+        scripts/build.sh
+        build/qe-cli --table sales=data/sales.parquet --query "SELECT ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect? If DuckDB disagrees with qe, include the DuckDB query and result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the error, result, or plan. `--explain` output is useful for planner issues.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Paste the relevant rows from the README verified-environment table, or run the commands below.
+      render: shell
+      placeholder: |
+        build/qe-cli --version
+        uname -a
+        cmake --version
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - SQL parser
+        - Planner
+        - Storage / Parquet
+        - Execution operator
+        - CLI / output
+        - Tests / fuzzing
+        - Benchmarks
+        - Documentation
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues before opening this report.
+          required: true
+        - label: This is not a request for unsupported SQL; the documented subset is in the README.
+          required: false
+        - label: I have not included fabricated benchmark or GPU numbers.
+          required: true

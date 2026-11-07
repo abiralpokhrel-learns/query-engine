@@ -1,0 +1,49 @@
+# Changelog
+
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Contributor guide, pull-request checklist, and issue templates.
+- `clang-format` and `ruff` configuration, with format checks in CI.
+- ASan/UBSan CI job, warnings-as-errors builds, and coverage reporting.
+- Pull-request benchmark verification with a ratio-based regression check.
+- Mermaid architecture diagram and a real CLI help transcript in the README.
+- Branch protection requiring pull requests and green CI before merge.
+
+### Changed
+
+- CI now uses the current `actions/checkout` and `setup-micromamba` releases.
+
+## [0.2.0] - 2026-11-06
+
+First public release of `qe`, a columnar SQL query engine built from first
+principles in C++20.
+
+### Added
+
+- Parquet storage with column pruning, predicate pushdown, row-group skipping,
+  and metadata-only `COUNT(*)`.
+- SQL subset with `DISTINCT`, inner and left joins, `WHERE`, `GROUP BY`,
+  `HAVING`, `ORDER BY`, `LIMIT`, `OFFSET`, `IN`, and `BETWEEN`.
+- Aggregates: `COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, and `MAX`.
+- Vectorized batch pipeline and bounded top-k sorting for `ORDER BY ... LIMIT`.
+- 166 end-to-end correctness tests against DuckDB, a C++ parser/unit suite, and
+  a deterministic differential fuzzer.
+- Verified CPU-vs-DuckDB benchmarks on one million rows, with stored JSON,
+  Markdown reports, and generated charts.
+- Engineering write-up covering architecture, correctness strategy, benchmark
+  methodology, honest wins and losses, and the deferred CUDA design.
+
+### Fixed
+
+- Parser keyword expectations now require the exact keyword rather than any
+  keyword token, rejecting malformed clauses such as `BETWEEN 1 OR 2`.
+- Fuzz reporting now shows the correct pass count when a run stops early.
+
+[Unreleased]: https://github.com/abiralpokhrel-learns/query-engine/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/abiralpokhrel-learns/query-engine/releases/tag/v0.2.0
