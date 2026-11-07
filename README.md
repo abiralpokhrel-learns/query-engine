@@ -1,6 +1,7 @@
 # qe — a columnar analytical query engine
 
 [![CI](https://github.com/abiralpokhrel-learns/query-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/abiralpokhrel-learns/query-engine/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/abiralpokhrel-learns/query-engine/branch/main/graph/badge.svg)](https://codecov.io/gh/abiralpokhrel-learns/query-engine)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A small SQL query engine built from first principles in C++20. It reads Apache
@@ -58,10 +59,62 @@ scripts/demo.sh
 ```
 
 `scripts/build.sh` honours `QE_PREFIX`, `CONDA_PREFIX`, `CMAKE_BIN`,
-`BUILD_DIR`, and `CMAKE_BUILD_TYPE`. If no environment is active it falls back
-to `~/qe-env`, the layout used during development.
+`BUILD_DIR`, `CMAKE_BUILD_TYPE`, and `QE_WARNINGS_AS_ERRORS=ON`. If no
+environment is active it falls back to `~/qe-env`, the layout used during
+development.
+
+The CLI is self-documenting:
+
+```text
+$ build/qe-cli --help
+qe-cli 0.2.0 - columnar SQL query engine
+
+Usage:
+  qe-cli [options] <file.parquet> [SQL]
+  qe-cli [options] --table NAME=PATH [--table NAME=PATH ...] --query SQL
+
+Options:
+  --table NAME=PATH     Register a Parquet file under a SQL table name.
+                        Repeat for joins. A positional .parquet path is
+                        registered automatically under its file stem.
+  --query SQL           SQL text. May also be the second positional argument.
+  --format table|json   Output format (default: table).
+  --max-rows N          Maximum result rows to display; -1 shows all.
+                        Defaults to 50 for tables and all for JSON.
+  --batch-size N        Vectorized batch size (default: 8192).
+  --explain             Print the optimized plan and do not execute.
+  --repeat N            Execute the query N times and report the last result.
+  --no-stats            Do not print scan statistics to stderr.
+  -h, --help            Show this help.
+  --version             Show the version.
+
+Timings and scan statistics are written to stderr; query results go to stdout.
+
+Examples:
+  qe-cli data/sales.parquet "SELECT region, SUM(amount) FROM sales GROUP BY region"
+  qe-cli --table a=a.parquet --table b=b.parquet \
+         --query "SELECT a.k, b.v FROM a JOIN b ON a.id = b.id LIMIT 10"
+```
 
 ## What the engine does
+
+### Architecture
+
+```mermaid
+flowchart LR
+  SQL[SQL text] --> Parser[Lexer and recursive-descent parser]
+  Parser --> Planner[Planner]
+  Planner --> Operators[Vectorized operator pipeline]
+  Catalog[(Parquet catalog)] --> Scan[Scan: pruning, statistics, filters]
+  Planner -->|pushed filters and pruned columns| Scan
+  Scan --> Operators
+  Operators --> Result[Table or JSON output]
+  Operators -.->|Filter / Join / Aggregate / HAVING / Project / Distinct / Sort / Limit| Result
+```
+
+The planner chooses the operator order for each query; the diagram shows the
+default pipeline shape, not a fixed execution order. See the
+[engineering write-up](docs/engineering-writeup.md) for the full design.
 
 ### Storage
 
@@ -155,12 +208,19 @@ ctest --test-dir build --output-on-failure    # parser/unit tests
 python scripts/fuzz_compare.py --queries 1000 --seed 2026
 ```
 
+CI enforces `clang-format` and `ruff` formatting, builds with
+`-Wall -Wextra -Wpedantic -Werror`, runs a separate AddressSanitizer /
+UndefinedBehaviorSanitizer job, and publishes line and branch coverage to
+[Codecov](https://codecov.io/gh/abiralpokhrel-learns/query-engine). The coverage
+threshold is enforced by CI as well.
+
 ## Benchmarks
 
 The harness verifies every query against DuckDB before timing it, then records
 warm-ups, repeats, raw runs, medians, query text, hardware, library versions,
 and the dataset manifest. Charts are rendered from the stored JSON, never from
-hand-typed numbers.
+hand-typed numbers. Pull requests run the same harness and fail if a query's
+CPU/DuckDB ratio grows more than 3x beyond the committed baseline.
 
 ```bash
 python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2
@@ -195,27 +255,36 @@ optimization that cut the low-cardinality `GROUP BY` from 5.1 s to around 0.25 s
 ## Repository layout
 
 ```
+.github/
+  workflows/ci.yml            build, test, sanitizer, coverage, benchmark jobs
+  ISSUE_TEMPLATE/             bug report and feature request forms
+  pull_request_template.md
 src/
-  cli/        table and JSON output
-  engine/     expressions, keys, operators, planner, executor
-  sql/        lexer, recursive-descent parser, AST
-  storage/    Parquet catalog, schema checks, pushdown
+  cli/                        table and JSON output
+  engine/                     expressions, keys, operators, planner, executor
+  sql/                        lexer, recursive-descent parser, AST
+  storage/                    Parquet catalog, schema checks, pushdown
 tests/
-  sql_test.cpp        C++ parser/unit tests
-  test_engine.py      end-to-end correctness vs DuckDB
+  sql_test.cpp                C++ parser/unit tests
+  test_engine.py              end-to-end correctness vs DuckDB
 scripts/
-  build.sh            CMake + Ninja build
-  generate_data.py    deterministic Parquet generator
-  run_benchmarks.py   verified benchmark harness
-  plot_benchmarks.py  chart renderer (stored JSON only)
-  fuzz_compare.py     differential SQL fuzzer against DuckDB
-  demo.sh             one-command demo
+  build.sh                    CMake + Ninja build
+  generate_data.py            deterministic Parquet generator
+  run_benchmarks.py           verified benchmark harness
+  check_benchmark_regressions.py  PR ratio regression check
+  plot_benchmarks.py          chart renderer (stored JSON only)
+  fuzz_compare.py             differential SQL fuzzer against DuckDB
+  demo.sh                     one-command demo
 benchmarks/
-  results/            latest verified JSON/Markdown report
-  charts/             chart generated from the stored JSON
-data/                 generated sample data (200k sales rows, created by demo)
+  results/                    latest verified JSON/Markdown report
+  charts/                     chart generated from the stored JSON
+data/                         generated sample data (created by the demo)
 docs/
   engineering-writeup.md
+.clang-format                 C++ formatting rules
+pyproject.toml                Python formatting and lint rules
+CHANGELOG.md                  release history
+CONTRIBUTING.md               development and pull-request guide
 ```
 
 The sample Parquet files are deterministic but are not committed; `scripts/demo.sh`
@@ -232,6 +301,8 @@ creates them on first run with `scripts/generate_data.py`.
 | DuckDB | 2.0.0 |
 | Python | 3.12.16 |
 | PyArrow / NumPy | 13.0.0 / 1.26.4 |
+| Formatting | clang-format 23.1.4, ruff 0.17.4 |
+| Coverage | gcovr 8.8 |
 | CUDA toolkit | 12.9.86 (compiles; no usable device) |
 | GPU | none exposed to this environment |
 
@@ -257,6 +328,13 @@ aggregation and join probing, multi-threading, CUDA filter/aggregation on a
 machine with a usable GPU, the remaining join types and SQL clauses, join-key
 type coercion, spilling, and nested-type support. These are listed rather than
 half-implemented.
+
+## Development
+
+`main` is protected: changes land through pull requests with green CI, and
+history is kept linear. The [contributor guide](CONTRIBUTING.md) covers local
+setup, code style, sanitizer builds, and the full checklist for adding a SQL
+feature. Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Author
 

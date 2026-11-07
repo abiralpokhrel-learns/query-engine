@@ -165,6 +165,12 @@ deterministic filters, aggregates, `DISTINCT`, inner and left joins,
 value with DuckDB. The generator stays inside the supported subset, so a
 mismatch is an engine bug rather than an unsupported query.
 
+CI adds several independent quality gates: `clang-format` and `ruff` checks,
+warnings-as-errors builds, a separate AddressSanitizer / UndefinedBehaviorSanitizer
+job, and a coverage job that publishes line and branch results to Codecov. These
+do not replace the DuckDB oracle; they catch a different class of defects, such
+as formatting drift, undefined behavior, and untested branches.
+
 The generated data deliberately contains nulls, skew, duplicate keys, quoted
 strings (`O'Brien`), leap-day and pre-epoch dates, empty strings, and empty
 tables. These are the cases that tend to break naive implementations.
@@ -193,6 +199,12 @@ report rather than hidden.
 The benchmark intentionally includes a metadata-only case (`count_star`), a
 query where row-group pruning dominates (`empty_filter`), and queries the engine
 loses. It does not select only favorable cases.
+
+Pull requests run the same verified harness on a fresh runner. The check
+compares each query's CPU/DuckDB ratio with the committed baseline and fails on
+a ratio increase of more than 3x; sub-millisecond queries are skipped because
+scheduler noise dominates them. Raw PR results are uploaded as CI artifacts, so
+a reviewer can inspect the numbers rather than trusting a summary.
 
 ## 5. Results
 
@@ -405,10 +417,16 @@ Version 2 work still open, in priority order:
 micromamba env create -f environment.yml
 micromamba activate qe
 scripts/build.sh
+ctest --test-dir build --output-on-failure
 python -m pytest tests -q
+python scripts/fuzz_compare.py --queries 1000 --seed 2026
 python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2
 scripts/demo.sh
 ```
+
+The contributor workflow, formatting commands, sanitizer build, and SQL-feature
+checklist are in [`CONTRIBUTING.md`](../CONTRIBUTING.md). Release history is in
+[`CHANGELOG.md`](../CHANGELOG.md).
 
 The benchmark command regenerates `benchmarks/results/bench_<UTC>.json` and
 `.md`, updates `latest.*`, and renders `benchmarks/charts/latest.png` from the
