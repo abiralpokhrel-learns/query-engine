@@ -167,9 +167,10 @@ mismatch is an engine bug rather than an unsupported query.
 
 CI adds several independent quality gates: `clang-format` and `ruff` checks,
 warnings-as-errors builds, a separate AddressSanitizer / UndefinedBehaviorSanitizer
-job, and a coverage job that publishes line and branch results to Codecov. These
-do not replace the DuckDB oracle; they catch a different class of defects, such
-as formatting drift, undefined behavior, and untested branches.
+job, and a coverage job that enforces a line threshold and publishes line and
+branch results as a build artifact and repository-hosted badge. These do not
+replace the DuckDB oracle; they catch a different class of defects, such as
+formatting drift, undefined behavior, and untested branches.
 
 The generated data deliberately contains nulls, skew, duplicate keys, quoted
 strings (`O'Brien`), leap-day and pre-epoch dates, empty strings, and empty

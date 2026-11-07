@@ -1,7 +1,7 @@
 # qe — a columnar analytical query engine
 
 [![CI](https://github.com/abiralpokhrel-learns/query-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/abiralpokhrel-learns/query-engine/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/abiralpokhrel-learns/query-engine/branch/main/graph/badge.svg)](https://codecov.io/gh/abiralpokhrel-learns/query-engine)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fabiralpokhrel-learns%2Fquery-engine%2Fbadges%2Fcoverage.json)](https://github.com/abiralpokhrel-learns/query-engine/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A small SQL query engine built from first principles in C++20. It reads Apache
@@ -210,9 +210,9 @@ python scripts/fuzz_compare.py --queries 1000 --seed 2026
 
 CI enforces `clang-format` and `ruff` formatting, builds with
 `-Wall -Wextra -Wpedantic -Werror`, runs a separate AddressSanitizer /
-UndefinedBehaviorSanitizer job, and publishes line and branch coverage to
-[Codecov](https://codecov.io/gh/abiralpokhrel-learns/query-engine). The coverage
-threshold is enforced by CI as well.
+UndefinedBehaviorSanitizer job, and reports line and branch coverage. The
+coverage job enforces a 60% line threshold, uploads the detailed report as an
+artifact, and updates the repository-hosted coverage badge from `main`.
 
 ## Benchmarks
 
@@ -274,6 +274,7 @@ scripts/
   check_benchmark_regressions.py  PR ratio regression check
   plot_benchmarks.py          chart renderer (stored JSON only)
   fuzz_compare.py             differential SQL fuzzer against DuckDB
+  write_coverage_badge.py     shields.io badge from the gcovr summary
   demo.sh                     one-command demo
 benchmarks/
   results/                    latest verified JSON/Markdown report

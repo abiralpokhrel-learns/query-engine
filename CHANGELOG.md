@@ -10,7 +10,8 @@ All notable changes to this project are documented here. The format follows
 
 - Contributor guide, pull-request checklist, and issue templates.
 - `clang-format` and `ruff` configuration, with format checks in CI.
-- ASan/UBSan CI job, warnings-as-errors builds, and coverage reporting.
+- ASan/UBSan CI job, warnings-as-errors builds, coverage reporting, and a
+  repository-hosted coverage badge.
 - Pull-request benchmark verification with a ratio-based regression check.
 - Mermaid architecture diagram and a real CLI help transcript in the README.
 - Branch protection requiring pull requests and green CI before merge.
