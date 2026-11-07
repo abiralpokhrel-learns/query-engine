@@ -122,9 +122,10 @@ Run benchmarks with:
 python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2
 ```
 
-Pull requests that touch scan, aggregation, join, or sort code run a smaller
-benchmark verification job and compare CPU/DuckDB ratios with the committed
-baseline. Catastrophic regressions fail the check; ordinary noise does not.
+Every pull request runs a smaller benchmark verification job and compares
+CPU/DuckDB ratios with the committed baseline. Catastrophic regressions fail the
+check; ordinary noise does not. Performance-sensitive changes should still
+include a full local benchmark run with before/after numbers.
 
 ## Pull requests
 
