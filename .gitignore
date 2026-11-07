@@ -10,6 +10,7 @@ __pycache__/
 venv/
 .coverage
 coverage.xml
+coverage-summary.json
 
 # Generated sample and benchmark data (recreate with scripts/generate_data.py
 # or let scripts/demo.sh generate it on first run)
