@@ -23,8 +23,9 @@ All notable changes to this project are documented here. The format follows
   transfer/kernel timing.
 - `--gpu` mode in the benchmark harness: GPU results are verified against
   DuckDB before timing, and the report records the measured GPU end-to-end,
-  transfer, and kernel times. The committed run reports one narrow GPU win and
-  one GPU loss rather than a blanket speedup claim.
+  transfer, and kernel times. The committed run reports both GPU paths as
+  roughly tied or slower than the CPU rather than making a blanket speedup
+  claim.
 
 ### Changed
 
