@@ -26,6 +26,24 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = Path(os.environ.get("QE_CLI", str(ROOT / "build" / "qe-cli")))
 
+
+def _cuda_device_available() -> bool:
+    if not BINARY.exists():
+        return False
+    try:
+        completed = subprocess.run(
+            [str(BINARY), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0 and "cuda: enabled" in completed.stdout
+
+
+GPU_AVAILABLE = _cuda_device_available()
+
 sys.path.insert(0, str(ROOT / "scripts"))
 from fuzz_compare import generate_queries  # noqa: E402
 
@@ -429,6 +447,69 @@ def test_json_shape_and_table_output(data_dir: Path) -> None:
     assert "5000" in table_run.stdout
     assert "timings:" in table_run.stderr
     assert "scan:" in table_run.stderr
+
+
+GPU_QUERIES = [
+    "SELECT COUNT(*), SUM(amount), AVG(amount) FROM sales",
+    "SELECT SUM(amount) FROM sales WHERE amount > 1000",
+    "SELECT SUM(amount), AVG(amount) FROM edge_cases",
+    "SELECT SUM(amount) FROM sales WHERE amount IS NULL",
+]
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="qe-cli was built without a usable CUDA device")
+@pytest.mark.parametrize("query", GPU_QUERIES)
+def test_gpu_aggregate_matches_duckdb(data_dir: Path, conn, query: str) -> None:
+    run = assert_matches_duckdb(data_dir, conn, query, "--gpu")
+    if "WHERE amount IS NULL" in query:
+        assert "gpu: used=0" in run.stderr, run.stderr
+        assert "reason=no-rows" in run.stderr, run.stderr
+    else:
+        assert "gpu: used=1" in run.stderr, run.stderr
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="qe-cli was built without a usable CUDA device")
+def test_gpu_aggregate_handles_tiny_batches(data_dir: Path, conn) -> None:
+    query = "SELECT COUNT(*), SUM(amount), AVG(amount) FROM sales"
+    run = assert_matches_duckdb(data_dir, conn, query, "--gpu", "--batch-size", "7")
+    assert "gpu: used=1" in run.stderr, run.stderr
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="qe-cli was built without a usable CUDA device")
+def test_gpu_float_aggregate(data_dir: Path, conn) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = data_dir / "gpu_float.parquet"
+    pq.write_table(
+        pa.table({"v": pa.array([1.5, None, 2.5, -1.0, 0.0], type=pa.float32())}),
+        path,
+    )
+    conn.execute(f"CREATE VIEW gpu_float AS SELECT * FROM read_parquet('{path.as_posix()}')")
+    query = "SELECT COUNT(*), SUM(v), AVG(v) FROM gpu_float"
+    run = run_qe(data_dir, query, "--gpu", tables=("gpu_float",))
+    assert run.returncode == 0, run.stderr
+    assert "gpu: used=1" in run.stderr, run.stderr
+    expected = [[normalize(value) for value in row] for row in conn.execute(query).fetchall()]
+    actual = run.rows
+    assert len(actual) == len(expected)
+    for actual_row, expected_row in zip(actual, expected):
+        for a, e in zip(actual_row, expected_row):
+            assert same_value(a, e), (actual_row, expected_row)
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="qe-cli was built without a usable CUDA device")
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT COUNT(*), SUM(quantity) FROM sales",
+        "SELECT region, SUM(amount) FROM sales GROUP BY region ORDER BY region",
+        "SELECT MIN(amount), MAX(amount) FROM sales",
+    ],
+)
+def test_gpu_falls_back_for_unsupported_aggregates(data_dir: Path, conn, query: str) -> None:
+    run = assert_matches_duckdb(data_dir, conn, query, "--gpu")
+    assert "gpu: used=0" in run.stderr, run.stderr
 
 
 def test_positional_parquet_path_and_query(data_dir: Path) -> None:

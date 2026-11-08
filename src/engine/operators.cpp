@@ -16,11 +16,17 @@
 
 #include "engine/expression.h"
 #include "engine/key.h"
+#include "gpu/cuda_runtime.h"
 
 namespace qe {
 namespace {
 
 using arrow::internal::checked_cast;
+
+// The GPU aggregate buffers values on the host in bounded chunks. A flush
+// performs one host-to-device copy, one reduction kernel, and one result copy,
+// so per-batch synchronization does not dominate small scans.
+constexpr size_t kGpuBufferValues = 1U << 20;
 
 std::shared_ptr<arrow::RecordBatch>
 MakeEmptyBatchImpl(const std::shared_ptr<arrow::Schema>& schema) {
@@ -859,6 +865,17 @@ arrow::Status AggregateOperator::Consume(const std::shared_ptr<arrow::RecordBatc
     }
   }
 
+  if (use_gpu_ && gpu_mode_ != -1 && group_by_.empty()) {
+    auto gpu_status = ConsumeGpu(batch, argument_arrays);
+    if (gpu_status.ok())
+      return gpu_status;
+    if (gpu_mode_ == 0 && gpu_status.IsNotImplemented()) {
+      gpu_mode_ = -1;
+    } else {
+      return gpu_status;
+    }
+  }
+
   if (group_by_.size() == 1) {
     if (group_key_mode_ == 0) {
       group_key_mode_ = IsIntegerKeyType(*group_arrays[0]->type()) ? 1 : -1;
@@ -928,6 +945,181 @@ arrow::Status AggregateOperator::Consume(const std::shared_ptr<arrow::RecordBatc
     }
 
     ARROW_RETURN_NOT_OK(UpdateGroup(groups_[group_index], row, argument_arrays));
+  }
+  return arrow::Status::OK();
+}
+
+arrow::Status
+AggregateOperator::ConsumeGpu(const std::shared_ptr<arrow::RecordBatch>& batch,
+                              const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays) {
+  if (gpu_mode_ == 0) {
+    bool has_gpu_work = false;
+    for (size_t i = 0; i < aggregates_.size(); ++i) {
+      const auto& aggregate = *aggregates_[i];
+      if (aggregate.star) {
+        if (aggregate.function != "count") {
+          return arrow::Status::NotImplemented("GPU aggregate does not support " +
+                                               aggregate.function + "(*)");
+        }
+        continue;
+      }
+      if (aggregate.function == "count")
+        continue;
+      if (aggregate.function != "sum" && aggregate.function != "avg") {
+        return arrow::Status::NotImplemented("GPU aggregate does not support " +
+                                             aggregate.function);
+      }
+      const auto out_type = output_schema_->field(static_cast<int>(group_by_.size() + i))->type();
+      if (out_type->id() != arrow::Type::DOUBLE) {
+        return arrow::Status::NotImplemented(
+            "GPU aggregate currently supports only double-precision SUM/AVG results");
+      }
+      const auto& arguments = argument_arrays[i];
+      if (!arguments) {
+        return arrow::Status::Invalid("GPU aggregate argument was not evaluated");
+      }
+      if (arguments->type()->id() != arrow::Type::DOUBLE &&
+          arguments->type()->id() != arrow::Type::FLOAT) {
+        return arrow::Status::NotImplemented(
+            "GPU aggregate currently supports only FLOAT/DOUBLE SUM/AVG arguments");
+      }
+      if (arguments->length() > 0 &&
+          (arguments->data()->buffers.size() < 2 || !arguments->data()->buffers[1])) {
+        return arrow::Status::Invalid("GPU aggregate received a numeric array without values");
+      }
+      has_gpu_work = true;
+    }
+    if (!has_gpu_work) {
+      return arrow::Status::NotImplemented("no GPU-supported aggregate in this query");
+    }
+
+    gpu_workspace_ = std::make_unique<gpu::Workspace>();
+    if (!gpu_workspace_->available()) {
+      return arrow::Status::NotImplemented("GPU workspace unavailable: " + gpu_workspace_->error());
+    }
+    gpu_buffers_.resize(aggregates_.size());
+    for (size_t i = 0; i < aggregates_.size(); ++i) {
+      const auto& aggregate = *aggregates_[i];
+      if (aggregate.function == "sum" || aggregate.function == "avg") {
+        gpu_buffers_[i].values.reserve(kGpuBufferValues);
+      }
+    }
+    gpu_mode_ = 1;
+    stats_->gpu_attempted = true;
+  }
+
+  if (groups_.empty()) {
+    Group group;
+    group.states.resize(aggregates_.size());
+    groups_.push_back(std::move(group));
+  }
+
+  for (size_t i = 0; i < aggregates_.size(); ++i) {
+    const auto& aggregate = *aggregates_[i];
+    if (aggregate.function == "count") {
+      if (aggregate.star) {
+        groups_[0].states[i].count += batch->num_rows();
+      } else {
+        const auto& arguments = argument_arrays[i];
+        groups_[0].states[i].count += arguments->length() - arguments->null_count();
+      }
+      continue;
+    }
+
+    const auto& arguments = argument_arrays[i];
+    const int64_t length = arguments->length();
+    if (length == 0)
+      continue;
+    GpuBuffer& buffer = gpu_buffers_[i];
+    if (arguments->type()->id() == arrow::Type::DOUBLE) {
+      const double* values = reinterpret_cast<const double*>(arguments->data()->buffers[1]->data());
+      if (arguments->null_count() == 0) {
+        buffer.values.insert(buffer.values.end(), values + arguments->offset(),
+                             values + arguments->offset() + length);
+      } else {
+        for (int64_t row = 0; row < length; ++row) {
+          if (!arguments->IsNull(row))
+            buffer.values.push_back(values[arguments->offset() + row]);
+        }
+      }
+    } else {
+      const float* values = reinterpret_cast<const float*>(arguments->data()->buffers[1]->data());
+      if (arguments->null_count() == 0) {
+        for (int64_t row = 0; row < length; ++row) {
+          buffer.values.push_back(static_cast<double>(values[arguments->offset() + row]));
+        }
+      } else {
+        for (int64_t row = 0; row < length; ++row) {
+          if (!arguments->IsNull(row)) {
+            buffer.values.push_back(static_cast<double>(values[arguments->offset() + row]));
+          }
+        }
+      }
+    }
+
+    if (buffer.values.size() >= kGpuBufferValues) {
+      ARROW_RETURN_NOT_OK(FlushGpuBuffer(i));
+    }
+  }
+  return arrow::Status::OK();
+}
+
+arrow::Status AggregateOperator::FlushGpuBuffer(size_t index) {
+  if (index >= gpu_buffers_.size())
+    return arrow::Status::OK();
+  GpuBuffer& buffer = gpu_buffers_[index];
+  if (buffer.values.empty())
+    return arrow::Status::OK();
+  if (!gpu_workspace_ || !gpu_workspace_->available()) {
+    return arrow::Status::Invalid("GPU workspace is not available");
+  }
+
+  gpu::Timings timings;
+  gpu::Reduction reduction = gpu_workspace_->SumDouble(
+      buffer.values.data(), nullptr, 0, static_cast<int64_t>(buffer.values.size()), &timings);
+  if (!reduction.ok) {
+    return arrow::Status::Invalid("GPU aggregate failed: " + reduction.error);
+  }
+
+  buffer.sum += reduction.sum;
+  buffer.count += reduction.valid_count;
+  buffer.values.clear();
+  stats_->gpu_used = true;
+  ++stats_->gpu_batches;
+  stats_->gpu_transfer_ms += timings.transfer_ms;
+  stats_->gpu_kernel_ms += timings.kernel_ms;
+  return arrow::Status::OK();
+}
+
+arrow::Status AggregateOperator::FinishGpu() {
+  if (gpu_mode_ != 1)
+    return arrow::Status::OK();
+
+  for (size_t i = 0; i < aggregates_.size(); ++i) {
+    const auto& aggregate = *aggregates_[i];
+    if (aggregate.function == "sum" || aggregate.function == "avg") {
+      ARROW_RETURN_NOT_OK(FlushGpuBuffer(i));
+    }
+  }
+
+  if (groups_.empty()) {
+    Group group;
+    group.states.resize(aggregates_.size());
+    groups_.push_back(std::move(group));
+  }
+
+  for (size_t i = 0; i < aggregates_.size(); ++i) {
+    const auto& aggregate = *aggregates_[i];
+    if (aggregate.function != "sum" && aggregate.function != "avg")
+      continue;
+    const GpuBuffer& buffer = gpu_buffers_[i];
+    AggState& state = groups_[0].states[i];
+    if (buffer.count == 0)
+      continue;
+    state.double_sum += buffer.sum;
+    if (aggregate.function == "avg")
+      state.count += buffer.count;
+    state.has_value = true;
   }
   return arrow::Status::OK();
 }
@@ -1027,6 +1219,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::Next() {
       break;
     ARROW_RETURN_NOT_OK(Consume(batch));
   }
+  ARROW_RETURN_NOT_OK(FinishGpu());
   ARROW_ASSIGN_OR_RAISE(result_, BuildResult());
   return result_;
 }

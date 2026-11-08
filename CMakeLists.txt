@@ -13,6 +13,8 @@ endif()
 find_package(Arrow CONFIG REQUIRED)
 find_package(Parquet CONFIG REQUIRED)
 
+option(QE_ENABLE_CUDA "Build the optional CUDA global-aggregate backend" OFF)
+
 add_library(qe_core
   src/sql/sql.cpp
   src/storage/parquet.cpp
@@ -23,6 +25,20 @@ add_library(qe_core
   src/engine/executor.cpp
   src/cli/printer.cpp
 )
+
+if(QE_ENABLE_CUDA)
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES 86 CACHE STRING "CUDA architectures to compile for" FORCE)
+  endif()
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
+  target_sources(qe_core PRIVATE src/gpu/cuda_runtime.cu)
+  target_link_libraries(qe_core PUBLIC CUDA::cudart)
+  target_compile_definitions(qe_core PUBLIC QE_ENABLE_CUDA)
+  message(STATUS "CUDA backend enabled with CUDAToolkit ${CUDAToolkit_VERSION}")
+else()
+  target_sources(qe_core PRIVATE src/gpu/cuda_runtime_stub.cpp)
+endif()
 
 target_include_directories(qe_core PUBLIC src)
 
@@ -53,7 +69,7 @@ if(QE_WARNINGS_AS_ERRORS)
   list(APPEND QE_WARNING_FLAGS -Werror)
 endif()
 
-target_compile_options(qe_core PRIVATE ${QE_WARNING_FLAGS})
+target_compile_options(qe_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${QE_WARNING_FLAGS}>)
 
 add_executable(qe-cli src/main.cpp)
 target_link_libraries(qe-cli PRIVATE qe_core)
@@ -63,15 +79,16 @@ target_compile_definitions(qe-cli PRIVATE
   QE_ARROW_VERSION="${Arrow_VERSION}"
 )
 
-option(QE_ENABLE_CUDA "Reserved for a future CUDA path; no GPU kernels are implemented yet" OFF)
-if(QE_ENABLE_CUDA)
-  enable_language(CUDA)
-  target_compile_definitions(qe_core PUBLIC QE_ENABLE_CUDA)
-  message(STATUS "CUDA path enabled")
-endif()
-
 enable_testing()
 add_executable(qe_sql_test tests/sql_test.cpp)
 target_link_libraries(qe_sql_test PRIVATE qe_core)
 target_compile_options(qe_sql_test PRIVATE ${QE_WARNING_FLAGS})
 add_test(NAME sql_parser COMMAND qe_sql_test)
+
+if(QE_ENABLE_CUDA)
+  add_executable(qe_cuda_test tests/cuda_test.cpp)
+  target_link_libraries(qe_cuda_test PRIVATE qe_core)
+  target_compile_options(qe_cuda_test PRIVATE ${QE_WARNING_FLAGS})
+  add_test(NAME cuda_runtime COMMAND qe_cuda_test)
+  set_tests_properties(cuda_runtime PROPERTIES SKIP_RETURN_CODE 77)
+endif()

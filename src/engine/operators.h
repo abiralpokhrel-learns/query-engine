@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "engine/plan.h"
+#include "gpu/cuda_runtime.h"
 #include "sql/sql.h"
 #include "storage/parquet.h"
 
@@ -23,6 +24,13 @@ struct ExecutionStats {
   // Rows counted from Parquet metadata instead of being decoded. Used by
   // COUNT(*) queries with no predicate.
   int64_t rows_from_metadata = 0;
+  // Set only when a query actually ran a GPU kernel, not merely because the
+  // binary was compiled with CUDA support.
+  bool gpu_used = false;
+  bool gpu_attempted = false;
+  int64_t gpu_batches = 0;
+  double gpu_transfer_ms = 0.0;
+  double gpu_kernel_ms = 0.0;
 };
 
 class Operator {
@@ -159,9 +167,11 @@ class AggregateOperator final : public Operator {
 public:
   AggregateOperator(std::shared_ptr<Operator> child, std::vector<sql::ExprPtr> group_by,
                     std::vector<sql::ExprPtr> aggregates,
-                    std::shared_ptr<arrow::Schema> output_schema)
+                    std::shared_ptr<arrow::Schema> output_schema,
+                    std::shared_ptr<ExecutionStats> stats, bool use_gpu = false)
       : child_(std::move(child)), group_by_(std::move(group_by)),
-        aggregates_(std::move(aggregates)), output_schema_(std::move(output_schema)) {}
+        aggregates_(std::move(aggregates)), output_schema_(std::move(output_schema)),
+        stats_(std::move(stats)), use_gpu_(use_gpu) {}
 
   const std::shared_ptr<arrow::Schema>& schema() const override {
     return output_schema_;
@@ -193,15 +203,30 @@ private:
 
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> BuildResult();
   arrow::Status Consume(const std::shared_ptr<arrow::RecordBatch>& batch);
+  arrow::Status ConsumeGpu(const std::shared_ptr<arrow::RecordBatch>& batch,
+                           const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays);
+  arrow::Status FlushGpuBuffer(size_t index);
+  arrow::Status FinishGpu();
   arrow::Status UpdateGroup(Group& group, int64_t row,
                             const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays);
   size_t FlatFindOrInsert(uint64_t key, bool is_null, bool* inserted);
   void FlatGrow();
 
+  struct GpuBuffer {
+    std::vector<double> values;
+    double sum = 0.0;
+    int64_t count = 0;
+  };
+
   std::shared_ptr<Operator> child_;
   std::vector<sql::ExprPtr> group_by_;
   std::vector<sql::ExprPtr> aggregates_;
   std::shared_ptr<arrow::Schema> output_schema_;
+  std::shared_ptr<ExecutionStats> stats_;
+  bool use_gpu_ = false;
+  int gpu_mode_ = 0; // 0 undecided, 1 active, -1 CPU fallback
+  std::unique_ptr<gpu::Workspace> gpu_workspace_;
+  std::vector<GpuBuffer> gpu_buffers_;
   std::vector<Group> groups_;
   std::unordered_map<std::string, size_t> group_index_;
   std::vector<FlatSlot> flat_slots_;

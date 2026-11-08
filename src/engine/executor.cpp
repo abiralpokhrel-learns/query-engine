@@ -37,7 +37,7 @@ BuildOperator(const std::shared_ptr<LogicalPlan>& plan, const ExecutionOptions& 
   case LogicalPlan::Kind::Aggregate: {
     ARROW_ASSIGN_OR_RAISE(auto child, BuildOperator(plan->children[0], options, stats));
     return std::make_unique<AggregateOperator>(std::move(child), plan->group_by, plan->aggregates,
-                                               plan->schema);
+                                               plan->schema, stats, options.use_gpu);
   }
   case LogicalPlan::Kind::Project: {
     ARROW_ASSIGN_OR_RAISE(auto child, BuildOperator(plan->children[0], options, stats));
