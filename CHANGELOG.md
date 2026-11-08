@@ -15,6 +15,16 @@ All notable changes to this project are documented here. The format follows
 - Pull-request benchmark verification with a ratio-based regression check.
 - Mermaid architecture diagram and a real CLI help transcript in the README.
 - Branch protection requiring pull requests and green CI before merge.
+- Optional CUDA global-aggregate path (`QE_ENABLE_CUDA`, `--gpu`) for
+  no-`GROUP BY` queries that combine `COUNT` with floating-point `SUM`/`AVG`;
+  the GPU computes the reductions while `COUNT`, filtering, and the scan stay
+  on the host. The CPU path remains the default and unsupported queries fall
+  back to CPU. The binary reports device availability and per-query GPU
+  transfer/kernel timing.
+- `--gpu` mode in the benchmark harness: GPU results are verified against
+  DuckDB before timing, and the report records the measured GPU end-to-end,
+  transfer, and kernel times. The committed run reports one narrow GPU win and
+  one GPU loss rather than a blanket speedup claim.
 
 ### Changed
 

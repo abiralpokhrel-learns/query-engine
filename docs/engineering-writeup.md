@@ -12,19 +12,22 @@ results are compared exactly (with an explicit tolerance for floating point).
 The project is deliberately small. Version 1 is a finished CPU engine with a
 verified benchmark harness, not a half-built attempt at a full database. On top
 of that base, version 2 has added `DISTINCT`, `HAVING`, `LEFT JOIN`, `IN` /
-`BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, and a top-k sort. The GPU layer
-described in the original plan is **not present in this build**; the reason, and
-the design that would be used, are documented in Section 7.
+`BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort, and an opt-in CUDA
+global-aggregate path. The GPU implementation, verification, and measured
+results are documented in Section 7.
 
 At the time of writing:
 
-- 166 end-to-end correctness tests pass against DuckDB.
-- The C++ parser/unit suite passes.
+- 175 tests pass against DuckDB on a CUDA build (166 CPU tests plus 9 GPU-gated
+  tests); the GPU tests skip on CPU-only builds.
+- The C++ parser/unit suite passes, and the CUDA build adds a real reduction
+  self-test.
 - A deterministic differential fuzzer has matched DuckDB on multi-seed sweeps
   of generated queries; a fixed sample runs inside pytest.
-- Seven benchmark queries are verified against DuckDB, timed after warm-ups, and
+- Eight benchmark queries are verified against DuckDB, timed after warm-ups, and
   stored with full environment and dataset metadata.
-- Wins and losses are both reported; the latest table is in Section 5.
+- Wins and losses are both reported; the latest table is in Section 5, and the
+  GPU comparison is in Section 7.3.
 
 ## 2. Architecture
 
@@ -186,6 +189,8 @@ tables. These are the cases that tend to break naive implementations.
 4. runs warm-ups, then N measured repetitions for the engine and DuckDB;
 5. records every individual run, the median, min, max, batch size, thread
    counts, query text, engine version, library versions, CPU, memory, and OS;
+   with `--gpu`, it also verifies the GPU output, parses the measured `gpu:`
+   line, and records end-to-end, transfer, and kernel times;
 6. writes timestamped JSON/Markdown plus `latest.json` / `latest.md`;
 7. renders charts from the stored JSON with `scripts/plot_benchmarks.py`.
 
@@ -210,17 +215,20 @@ a reviewer can inspect the numbers rather than trusting a summary.
 ## 5. Results
 
 Latest run: 1,000,000 sales rows, 16 row groups, 22.5 MB, batch 8,192, AMD
-Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04.
+Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04, NVIDIA
+GeForce RTX 3050 Laptop GPU (4 GB, compute 8.6). The table below is CPU vs
+DuckDB; the GPU runs are in Section 7.3.
 
 | Query | qe CPU (ms) | DuckDB (ms) | Ratio | Winner |
 |---|---:|---:|---:|---|
-| filter_aggregate | 9.22 | 27.98 | 0.33x | qe |
-| empty_filter | 0.27 | 13.89 | 0.02x | qe |
-| group_region | 244.75 | 55.29 | 4.43x | DuckDB |
-| group_customer | 691.02 | 138.22 | 5.00x | DuckDB |
-| topk | 164.46 | 81.66 | 2.01x | DuckDB |
-| join_country | 773.26 | 112.36 | 6.88x | DuckDB |
-| count_star | 0.01 | 13.36 | 0.00x | qe |
+| filter_aggregate | 4.25 | 19.75 | 0.22x | qe |
+| global_aggregate | 64.12 | 32.71 | 1.96x | DuckDB |
+| empty_filter | 0.09 | 8.10 | 0.01x | qe |
+| group_region | 183.48 | 35.06 | 5.23x | DuckDB |
+| group_customer | 404.86 | 85.99 | 4.71x | DuckDB |
+| topk | 108.34 | 51.62 | 2.10x | DuckDB |
+| join_country | 416.32 | 72.36 | 5.75x | DuckDB |
+| count_star | 0.02 | 7.09 | 0.00x | qe |
 
 ### Why the engine wins three queries
 
@@ -236,23 +244,27 @@ zero-column count batch, so `execute_ms` rounds to 0.01 ms. That number measures
 low query overhead rather than scan throughput; it is reported because it is
 real, not because it generalizes.
 
-### Why the engine loses four queries
+### Why the engine loses five queries
 
+- **`global_aggregate`**: the full-table `SUM`/`AVG` still runs through the
+  row-wise aggregate loop on the CPU. DuckDB's vectorized, multi-threaded
+  aggregate is about 2x faster. The optional GPU path is compared in Section
+  7.3; it narrows the gap but does not beat DuckDB.
 - **`group_region` / `group_customer`**: the aggregate consumes a batch row by
   row, hashing a serialized key for each row. DuckDB uses vectorized,
-  multi-threaded hash aggregation. The engine is roughly 4-5x slower even after
-  the optimization described below.
+  multi-threaded hash aggregation. The engine is roughly 4.7-5.2x slower even
+  after the optimization described below.
 - **`join_country`**: the hash join builds and probes row by row, then feeds a
   row-wise aggregate. DuckDB's join and aggregate pipelines are vectorized and
-  parallel; the gap is about 7x.
+  parallel; the gap is about 5.8x.
 - **`topk`**: the engine now partitions to the top K before sorting, but it still
   scans and filters every batch with one thread and hashes no work away. DuckDB
-  combines a parallel scan with its own top-k path; the gap is about 2x.
+  combines a parallel scan with its own top-k path; the gap is about 2.1x.
 
 The honest conclusion is the one in the brief: a student-built engine should
 not be expected to beat a mature vectorized engine overall. The value is in the
 three cases where the design choices pay off, and in being able to explain the
-four cases where they do not.
+five cases where they do not.
 
 ## 6. A performance bug found by the benchmark
 
@@ -317,50 +329,92 @@ Two smaller fixes removed work that the benchmark made visible:
 Neither optimization changes SQL semantics, and both are covered by the same
 DuckDB comparison tests as the unoptimized paths.
 
-## 7. GPU status and design (deferred)
+## 7. GPU status and design
 
 The original plan called for CUDA kernels for filter and/or aggregation on an
 RTX 3050, with explicit host-to-device transfer accounting and a CPU fallback.
-**That layer is not implemented in this build.** The environment used for the
-build exposes an AMD Radeon integrated GPU. A CUDA 12.9 toolkit is installed in
-the conda environment, so `nvcc` can compile a smoke kernel, but there is no
-usable device: `nvidia-smi` cannot initialize NVML, and the probe fails at
-`cudaGetDevice` with "CUDA driver version is insufficient for CUDA runtime
-version". There is no CUDA device to run or validate a kernel on. Writing
-unverified CUDA code and presenting invented transfer or kernel times would
-violate the project's core rule: numbers come from the harness, and unsupported
-paths are reported as unavailable.
+The RTX 3050 Laptop GPU is now visible in both Windows and WSL2, and a CUDA
+12.9.86 build can execute and measure a real reduction. The backend is still
+deliberately narrow: it is an opt-in global-aggregate path, not a general GPU
+execution engine.
 
-The harness handles this explicitly:
+### 7.1 What is implemented
 
-- `--version` reports `cuda: unavailable (CPU-only build)`;
-- the results file records `"status": "completed_cpu_only"` and
-  `"gpu": {"available": false, ...}`;
-- GPU timing fields are `null`, not estimated;
-- the chart footnote states that GPU transfer/kernel timings are absent.
+- `QE_ENABLE_CUDA=ON` compiles `src/gpu/cuda_runtime.cu`; the default build
+  compiles a stub and never links CUDA.
+- `qe-cli --gpu` accepts no-`GROUP BY` queries that combine `COUNT` with
+  floating-point `SUM`/`AVG`. The GPU computes the floating-point reductions;
+  `COUNT`, the Parquet scan, filters, and all output formatting stay on the host.
+- The operator buffers only valid values in bounded host chunks (1,048,576
+  doubles per aggregate), then performs one host-to-device copy, one reduction
+  kernel, and one device-to-host copy per chunk. A reusable `gpu::Workspace`
+  keeps device buffers and CUDA events alive across chunks, avoiding
+  `cudaMalloc` and event creation on every batch.
+- The reduction kernel uses 256-thread blocks, up to 256 blocks, per-block
+  partial sums in shared memory, and `atomicAdd` for the final partials. The
+  self-test also exercises the validity-bitmap path.
+- `--gpu` checks that CUDA was compiled in and that a device is available, then
+  runs a real self-test before timing. The self-test loads the CUDA module so
+  module initialization is not charged to the first timed query.
+- Unsupported shapes (`GROUP BY`, integer sums, `MIN`/`MAX`, joins, non-aggregate
+  queries) fall back to the CPU path and report `gpu: used=0`. A CUDA runtime
+  failure during an active GPU query is returned as an error rather than
+  silently replaying data on the CPU.
+- `ExecutionStats` records whether a kernel ran, the number of GPU reductions,
+  transfer milliseconds, and kernel milliseconds. The CLI prints the measured
+  values on stderr even with `--no-stats`.
 
-If the project is run on a machine with a working NVIDIA GPU, the intended
-version 2 design is:
+### 7.2 Verification
 
-1. **Filter kernel**: transfer a batch's predicate columns to device memory,
-   evaluate the predicate into a byte mask, compact the batch on device (or
-   return indices), and transfer only the selected rows back.
-2. **Aggregation kernel**: for numeric aggregates, use a two-pass reduction
-   (partial sums/counts per block, then a small final reduction); for grouped
-   aggregates, hash keys on device into a per-batch table and merge partial
-   states on the host.
-3. **Batching**: size each transfer so input, mask, and output fit comfortably
-   inside 4 GB VRAM, with headroom. Never assume the whole dataset fits.
-4. **Measurement**: wrap every transfer in its own timer and record
-   `transfer_ms` separately from `kernel_ms`; report both alongside wall time.
-5. **Fallback**: every GPU operator keeps the CPU implementation and a switch
-   to force it. Correctness tests run both and compare results exactly.
-6. **Honesty**: if the GPU loses because transfer dominates, report that. The
-   write-up should explain the crossover point, not hide it.
+- `tests/cuda_test.cpp` queries the device, prints its name, compute capability,
+  and memory, then runs a 2,048-value reduction with nulls and verifies the
+  count and sum on the host. CTest treats a missing device as a skip.
+- `tests/test_engine.py` compares GPU `COUNT`/`SUM`/`AVG` results with DuckDB,
+  including a null-heavy edge-case table and a 7-row batch size. The GPU tests
+  skip unless `qe-cli --version` reports `cuda: enabled`.
+- The benchmark harness has an opt-in `--gpu` mode. It verifies both CPU and GPU
+  results against DuckDB, parses the measured `gpu:` line, and records
+  transfer/kernel timings. A CUDA build with no `--gpu` request records no GPU
+  timings.
 
-This is a deliberate scope decision, not an oversight. The CPU engine is
-finished and verified; an unverifiable GPU path would have made the project less
-credible, not more.
+### 7.3 Measured result
+
+The verified run used the RTX 3050 Laptop GPU (4 GB, compute 8.6, CUDA 12.9.86,
+driver 591.84) on 1,000,000 sales rows. GPU end-to-end times are medians of
+three runs after a warm-up; the CLI self-test ran before timing. Transfer and
+kernel columns are the separately measured CUDA components.
+
+| Query | CPU (ms) | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |
+|---|---:|---:|---:|---:|---:|
+| `filter_aggregate` | 4.25 | 6.12 | 0.205 | 0.060 | 1.44x |
+| `global_aggregate` | 64.12 | 59.03 | 2.272 | 0.184 | 0.92x |
+
+The result is mixed, and both directions are reported. On
+`filter_aggregate`, the kernel and transfer are tiny, but workspace setup and
+host buffering cost more than the 4.25 ms CPU query, so the GPU path is slower
+end to end. On `global_aggregate`, moving `SUM` and `AVG` over one million rows
+to the GPU just offsets that overhead and produces a small 0.92x GPU/CPU win.
+DuckDB remains much faster on both queries because it vectorizes and
+multi-threads the scan and aggregation; at this data size the Parquet scan and
+row-wise host work dominate. The GPU is not claimed to accelerate queries that
+spend most of their time decoding Parquet.
+
+### 7.4 Remaining GPU work
+
+The next useful steps are broader device coverage, not larger claims:
+
+1. Grouped aggregation and GPU filter kernels, starting with low-cardinality
+   group keys and row-group-sized batches.
+2. A GPU scan/decode path or fused filter to avoid paying host decoding cost
+   before a transfer; without it, global aggregates remain scan-bound.
+3. Async, pinned transfers and overlap with host decoding instead of the current
+   chunk-level copy/kernel/copy sequence.
+4. Integer aggregate types, `MIN`/`MAX`, and joins.
+5. A shared buffer for `SUM` and `AVG` over the same argument, which would
+   remove the duplicate host pass visible in `global_aggregate`.
+
+Those paths are intentionally not claimed until they can be measured on the
+same verified device.
 
 ## 8. Limits and version 2 ideas
 
@@ -376,15 +430,18 @@ Known 0.2.0 limits:
   and no `GROUP BY` expressions;
 - in-memory sort and aggregation, with no spilling;
 - row-wise inner loops for aggregation and join probing;
-- no CUDA path in this build because no usable GPU is exposed.
+- the CUDA path is optional and limited to global floating-point `SUM`/`AVG`
+  plus host-side `COUNT`; grouped aggregates, filters, joins, and integer sums
+  remain CPU-only.
 
 Version 2 work still open, in priority order:
 
 1. Vectorized hash aggregation (batch-level key encoding and columnar state
    updates) and a vectorized join probe.
 2. Multi-threaded scans and operators.
-3. CUDA filter and aggregation with separate transfer/kernel timers and CPU
-   fallback (requires NVIDIA hardware).
+3. CUDA grouped aggregation, filter kernels, and joins, with separate
+   transfer/kernel timers and CPU fallback; the global floating-point path is
+   implemented and measured.
 4. Remaining join types and join-key type coercion.
 5. `LIKE`, set operations, subqueries, CTEs, and window functions.
 6. Aggregate expressions, `DISTINCT` aggregates, and `GROUP BY` expressions.
@@ -408,9 +465,12 @@ Version 2 work still open, in priority order:
   forces a concrete explanation of where the engine's row-wise loops and
   single-threaded execution fall short. That explanation is more valuable than
   another favorable microbenchmark.
-- **Scope discipline is the finish line.** The GPU path was cut because it
-  could not be verified on this machine. Deferring it kept the CPU engine,
-  harness, tests, and documentation complete and reproducible.
+- **Scope discipline is the finish line.** The GPU path was implemented only
+  after the RTX 3050 became visible and a real reduction could be verified.
+  Keeping it opt-in preserved the CPU engine's default behavior, and the
+  benchmark reports the mixed outcome: one global aggregate narrowly wins on
+  the GPU, one filtered aggregate loses to it because scan and setup costs
+  dominate.
 
 ## 10. Reproducing everything
 
