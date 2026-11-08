@@ -18,6 +18,7 @@ import json
 import math
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,11 @@ QUERIES = [
             "SELECT COUNT(*), SUM(amount) FROM sales "
             "WHERE sale_date >= '2025-01-01' AND sale_date < '2025-02-01'"
         ),
+    },
+    {
+        "id": "global_aggregate",
+        "description": "Full-table global COUNT/SUM/AVG; exercises the optional CUDA aggregate path.",
+        "sql": "SELECT COUNT(*), SUM(amount), AVG(amount) FROM sales",
     },
     {
         "id": "empty_filter",
@@ -95,11 +101,16 @@ def run_command(command: list[str], check: bool = True) -> subprocess.CompletedP
 def get_engine_version() -> dict:
     completed = run_command([str(BINARY), "--version"])
     lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    cuda_line = next((line for line in lines if line.lower().startswith("cuda:")), "")
+    cuda_enabled = "cuda: enabled" in cuda_line.lower()
+    device_match = re.search(r"\((.*?)\)", cuda_line)
     return {
         "version_text": lines,
         "name": lines[0].split()[0] if lines else "qe-cli",
         "version": lines[0].split()[1] if len(lines) > 0 and len(lines[0].split()) > 1 else "?",
-        "cuda": any("cuda: enabled" in line.lower() for line in lines),
+        "cuda": cuda_enabled,
+        "cuda_line": cuda_line,
+        "cuda_device": device_match.group(1) if device_match else None,
     }
 
 
@@ -246,6 +257,28 @@ def parse_timings(stderr: str) -> dict:
     return {"timings": timings, "runs_ms": runs}
 
 
+def parse_gpu(stderr: str) -> dict | None:
+    """Parse the measured ``gpu:`` line, or return None when --gpu was not used."""
+    gpu_line = next((line for line in stderr.splitlines() if line.startswith("gpu:")), None)
+    if not gpu_line:
+        return None
+    fields = {}
+    for field in gpu_line.removeprefix("gpu:").strip().split():
+        if "=" in field:
+            key, value = field.split("=", 1)
+            fields[key] = value
+    used = fields.get("used") == "1"
+    transfer_ms = fields.get("transfer_ms")
+    kernel_ms = fields.get("kernel_ms")
+    return {
+        "used": used,
+        "batches": int(fields.get("batches", "0")),
+        "transfer_ms": float(transfer_ms) if used and transfer_ms is not None else None,
+        "kernel_ms": float(kernel_ms) if used and kernel_ms is not None else None,
+        "reason": fields.get("reason"),
+    }
+
+
 def normalize(value):
     if isinstance(value, (dt.date, dt.datetime)):
         return value.isoformat()
@@ -270,8 +303,8 @@ def same_value(actual, expected) -> bool:
     return actual == expected
 
 
-def verify_query(conn: duckdb.DuckDBPyConnection, data_dir: Path, query: str) -> dict:
-    completed = run_qe(data_dir, query, "--max-rows", "-1")
+def verify_query(conn: duckdb.DuckDBPyConnection, data_dir: Path, query: str, *extra: str) -> dict:
+    completed = run_qe(data_dir, query, "--max-rows", "-1", *extra)
     payload = json.loads(completed.stdout)
     actual = [[normalize(value) for value in row] for row in payload["rows"]]
     expected = [[normalize(value) for value in row] for row in conn.execute(query).fetchall()]
@@ -292,12 +325,15 @@ def verify_query(conn: duckdb.DuckDBPyConnection, data_dir: Path, query: str) ->
         "verified": True,
         "row_count": len(actual),
         "columns": payload["columns"],
+        "gpu": parse_gpu(completed.stderr),
     }
 
 
-def measure_qe(data_dir: Path, query: str, batch_size: int, repeats: int, warmups: int) -> dict:
+def measure_qe(
+    data_dir: Path, query: str, batch_size: int, repeats: int, warmups: int, *extra: str
+) -> dict:
     for _ in range(warmups):
-        run_qe(data_dir, query, "--batch-size", str(batch_size), "--max-rows", "0")
+        run_qe(data_dir, query, "--batch-size", str(batch_size), "--max-rows", "0", *extra)
     completed = run_qe(
         data_dir,
         query,
@@ -307,8 +343,10 @@ def measure_qe(data_dir: Path, query: str, batch_size: int, repeats: int, warmup
         str(repeats),
         "--max-rows",
         "0",
+        *extra,
     )
     parsed = parse_timings(completed.stderr)
+    gpu = parse_gpu(completed.stderr)
     runs = parsed["runs_ms"]
     return {
         "runs_ms": runs,
@@ -319,8 +357,12 @@ def measure_qe(data_dir: Path, query: str, batch_size: int, repeats: int, warmup
         "plan_ms": parsed["timings"].get("plan_ms"),
         "catalog_ms": parsed["timings"].get("catalog_ms"),
         "batch_size": batch_size,
-        "transfer_ms": None,
-        "kernel_ms": None,
+        "transfer_ms": gpu["transfer_ms"] if gpu else None,
+        "kernel_ms": gpu["kernel_ms"] if gpu else None,
+        "gpu": gpu,
+        "gpu_used": bool(gpu and gpu["used"]),
+        "gpu_batches": gpu["batches"] if gpu else 0,
+        "gpu_reason": gpu["reason"] if gpu else None,
     }
 
 
@@ -343,36 +385,85 @@ def measure_duckdb(conn: duckdb.DuckDBPyConnection, query: str, repeats: int, wa
     }
 
 
-def summarize(queries: list[dict]) -> dict:
+def summarize(
+    queries: list[dict], gpu_available: bool = False, gpu_requested: bool = False
+) -> dict:
     cpu_wins = 0
     duckdb_wins = 0
+    gpu_queries = 0
+    gpu_wins = 0
+    cpu_wins_over_gpu = 0
+    gpu_ties = 0
     for query in queries:
         if query["cpu"]["median_ms"] < query["duckdb"]["median_ms"]:
             cpu_wins += 1
         elif query["cpu"]["median_ms"] > query["duckdb"]["median_ms"]:
             duckdb_wins += 1
+
+        gpu = query.get("gpu")
+        if gpu and gpu.get("gpu_used"):
+            gpu_queries += 1
+            if gpu["median_ms"] < query["cpu"]["median_ms"]:
+                gpu_wins += 1
+            elif gpu["median_ms"] > query["cpu"]["median_ms"]:
+                cpu_wins_over_gpu += 1
+            else:
+                gpu_ties += 1
+
     return {
         "cpu_wins": cpu_wins,
         "duckdb_wins": duckdb_wins,
         "ties": len(queries) - cpu_wins - duckdb_wins,
-        "gpu_available": False,
-        "gpu_queries": 0,
+        "gpu_available": gpu_available,
+        "gpu_requested": gpu_requested,
+        "gpu_queries": gpu_queries,
+        "gpu_wins": gpu_wins,
+        "cpu_wins_over_gpu": cpu_wins_over_gpu,
+        "gpu_ties": gpu_ties,
     }
 
 
 def markdown_report(results: dict) -> str:
+    summary = results["summary"]
     gpu = results["gpu"]
-    if gpu.get("available"):
+    gpu_requested = summary.get("gpu_requested", False)
+    gpu_available = summary.get("gpu_available", False)
+    gpu_queries = summary.get("gpu_queries", 0)
+
+    if gpu_requested and gpu_available:
         gpu_note = (
-            "GPU timings are not reported: this build has no CUDA kernels. "
-            "Transfer and kernel columns are absent rather than estimated."
+            "GPU measurements use the optional CUDA global-aggregate path (`--gpu`). "
+            f"{gpu_queries} of {len(results['queries'])} queries ran a CUDA kernel; the rest "
+            "fell back to CPU or were not eligible. GPU median is the end-to-end "
+            "`execute_ms` including the CPU scan; transfer and kernel times are measured "
+            "separately below."
+        )
+    elif gpu_requested:
+        gpu_note = (
+            "GPU measurements were requested, but no usable CUDA device was detected. "
+            "No GPU timings are reported."
+        )
+    elif results.get("engine", {}).get("cuda"):
+        gpu_note = (
+            "This binary has CUDA support, but this run did not request `--gpu`; no GPU "
+            "timings are reported."
         )
     else:
         reason = gpu.get("reason", "no usable GPU was detected")
-        gpu_note = (
-            f"GPU timings are not reported: no usable GPU was detected ({reason}). "
-            "Transfer and kernel columns are absent rather than estimated."
-        )
+        if gpu.get("available"):
+            detail = (
+                "qe-cli was built without CUDA; rebuild with QE_ENABLE_CUDA=ON to measure "
+                "the GPU path."
+            )
+        else:
+            detail = f"no usable CUDA device was detected ({reason})."
+        gpu_note = f"CPU-only run: {detail} No GPU timings are reported."
+
+    gpu_hardware = ""
+    if gpu.get("gpus"):
+        names = ", ".join(item["name"] for item in gpu["gpus"])
+        gpu_hardware = f"; GPU: {names}"
+
     lines = [
         "# Benchmark results",
         "",
@@ -383,7 +474,8 @@ def markdown_report(results: dict) -> str:
         f"{results['dataset']['tables']['sales']['file_bytes'] / 1_000_000:.1f} MB.",
         "",
         f"Hardware: {results['environment']['processor']}, "
-        f"{results['environment']['memory']}, {results['environment']['platform']}.",
+        f"{results['environment']['memory']}, {results['environment']['platform']}"
+        f"{gpu_hardware}.",
         "",
         f"CPU engine batch size: {results['config']['batch_size']}; "
         f"median of {results['config']['repeats']} runs after "
@@ -391,26 +483,90 @@ def markdown_report(results: dict) -> str:
         "",
         f"> {gpu_note}",
         "",
-        "| Query | CPU median (ms) | DuckDB median (ms) | CPU / DuckDB | Winner |",
-        "|---|---:|---:|---:|---|",
+        "| Query | CPU median (ms) | GPU median (ms) | DuckDB median (ms) | "
+        "CPU / DuckDB | GPU / CPU | GPU path |",
+        "|---|---:|---:|---:|---:|---:|---|",
     ]
     for query in results["queries"]:
         cpu = query["cpu"]["median_ms"]
         duck = query["duckdb"]["median_ms"]
         ratio = cpu / duck if duck else float("inf")
-        winner = "CPU" if cpu < duck else ("DuckDB" if duck < cpu else "tie")
-        lines.append(f"| {query['id']} | {cpu:.2f} | {duck:.2f} | {ratio:.2f}x | {winner} |")
+        gpu_measure = query.get("gpu")
+        gpu_info = gpu_measure.get("gpu") if gpu_measure else None
+        if gpu_measure and gpu_info and gpu_info["used"]:
+            gpu_ms = f"{gpu_measure['median_ms']:.2f}"
+            gpu_ratio = f"{gpu_measure['median_ms'] / cpu:.2f}x" if cpu else "-"
+            gpu_path = "CUDA global aggregate"
+        elif gpu_measure:
+            gpu_ms = "-"
+            gpu_ratio = "-"
+            reason = gpu_info.get("reason") if gpu_info else "no GPU timing"
+            gpu_path = f"CPU fallback ({reason})"
+        else:
+            gpu_ms = "-"
+            gpu_ratio = "-"
+            gpu_path = "not requested"
+        lines.append(
+            f"| {query['id']} | {cpu:.2f} | {gpu_ms} | {duck:.2f} | {ratio:.2f}x | "
+            f"{gpu_ratio} | {gpu_path} |"
+        )
     lines += [
         "",
-        f"CPU wins: **{results['summary']['cpu_wins']}**; "
-        f"DuckDB wins: **{results['summary']['duckdb_wins']}**; "
-        f"ties: **{results['summary']['ties']}**.",
+        f"CPU wins vs DuckDB: **{summary['cpu_wins']}**; "
+        f"DuckDB wins: **{summary['duckdb_wins']}**; "
+        f"ties: **{summary['ties']}**.",
         "",
-        "A value below 1.00x means the CPU engine was faster; a value above 1.00x "
-        "means DuckDB was faster. DuckDB runs with its default thread count, while "
-        "the engine is single-threaded. Full timings, query text, versions, and "
-        "dataset metadata are in the adjacent JSON file.",
+    ]
+    if gpu_requested:
+        if gpu_queries:
+            lines += [
+                f"GPU used for **{gpu_queries}** queries; GPU faster than CPU: "
+                f"**{summary.get('gpu_wins', 0)}**, CPU faster than GPU: "
+                f"**{summary.get('cpu_wins_over_gpu', 0)}**, ties: "
+                f"**{summary.get('gpu_ties', 0)}**.",
+                "",
+            ]
+        else:
+            lines += [
+                "No benchmark query ran a GPU kernel in this run.",
+                "",
+            ]
+    lines += [
+        "A value below 1.00x means the first engine was faster; a value above 1.00x "
+        "means the second was faster. DuckDB runs with its default thread count, while "
+        "the engine is single-threaded. Full timings, per-run values, query text, "
+        "versions, and dataset metadata are in the adjacent JSON file.",
         "",
+    ]
+
+    if gpu_queries:
+        lines += [
+            "### GPU kernel components",
+            "",
+            "Transfer and kernel times are from the last timed run reported by the CLI; "
+            "the end-to-end median uses the same `--repeat` runs.",
+            "",
+            "| Query | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        for query in results["queries"]:
+            gpu_measure = query.get("gpu")
+            gpu_info = gpu_measure.get("gpu") if gpu_measure else None
+            if not (gpu_measure and gpu_info and gpu_info["used"]):
+                continue
+            cpu = query["cpu"]["median_ms"]
+            transfer = gpu_measure.get("transfer_ms")
+            kernel = gpu_measure.get("kernel_ms")
+            transfer_text = f"{transfer:.3f}" if transfer is not None else "-"
+            kernel_text = f"{kernel:.3f}" if kernel is not None else "-"
+            ratio = gpu_measure["median_ms"] / cpu if cpu else float("inf")
+            lines.append(
+                f"| {query['id']} | {gpu_measure['median_ms']:.2f} | {transfer_text} | "
+                f"{kernel_text} | {ratio:.2f}x |"
+            )
+        lines.append("")
+
+    lines += [
         "## Workload",
         "",
     ]
@@ -425,6 +581,19 @@ def markdown_report(results: dict) -> str:
             "```",
             "",
         ]
+        gpu_measure = query.get("gpu")
+        gpu_info = gpu_measure.get("gpu") if gpu_measure else None
+        if gpu_info:
+            if gpu_info["used"]:
+                transfer = gpu_measure.get("transfer_ms")
+                kernel = gpu_measure.get("kernel_ms")
+                lines += [
+                    f"GPU: **used**, {gpu_info['batches']} reduction(s), transfer "
+                    f"{transfer:.3f} ms, kernel {kernel:.3f} ms.",
+                    "",
+                ]
+            else:
+                lines += [f"GPU: **CPU fallback** ({gpu_info.get('reason', 'unknown')}).", ""]
     return "\n".join(lines)
 
 
@@ -440,6 +609,11 @@ def main() -> int:
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--force-data", action="store_true")
     parser.add_argument("--skip-verify", action="store_true")
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Also measure the optional CUDA global-aggregate path with qe-cli --gpu.",
+    )
     args = parser.parse_args()
 
     if not BINARY.exists():
@@ -455,6 +629,15 @@ def main() -> int:
     )
     gpu = get_gpu_status()
     engine = get_engine_version()
+    gpu_available = bool(engine["cuda"] and gpu.get("available"))
+    if args.gpu and not engine["cuda"]:
+        parser.error(
+            "--gpu requires a CUDA-enabled qe-cli build; rebuild with QE_ENABLE_CUDA=ON "
+            "and point QE_CLI at build-cuda/qe-cli"
+        )
+    if args.gpu and not gpu.get("available"):
+        reason = gpu.get("reason", "nvidia-smi did not report a usable device")
+        parser.error(f"--gpu requested but no usable GPU was detected: {reason}")
 
     conn = duckdb.connect()
     create_views(conn, data_dir)
@@ -464,10 +647,17 @@ def main() -> int:
     query_results = []
     for spec in QUERIES:
         verification = (
-            {"verified": False, "row_count": None, "columns": None}
+            {"verified": False, "row_count": None, "columns": None, "gpu": None}
             if args.skip_verify
             else verify_query(conn, data_dir, spec["sql"])
         )
+        gpu_verification = None
+        if args.gpu:
+            gpu_verification = (
+                {"verified": False, "row_count": None, "columns": None, "gpu": None}
+                if args.skip_verify
+                else verify_query(conn, data_dir, spec["sql"], "--gpu")
+            )
         print(f"  {spec['id']}: verified={verification['verified']}")
         query_results.append(
             {
@@ -475,6 +665,7 @@ def main() -> int:
                 "description": spec["description"],
                 "sql": spec["sql"],
                 **verification,
+                "gpu_verification": gpu_verification,
             }
         )
 
@@ -484,22 +675,45 @@ def main() -> int:
             data_dir, query["sql"], args.batch_size, args.repeats, args.warmups
         )
         query["duckdb"] = measure_duckdb(conn, query["sql"], args.repeats, args.warmups)
-        query["gpu"] = None
-        query["gpu_reason"] = (
-            "No CUDA kernel in this build; no GPU timings are fabricated."
-            if not engine["cuda"]
-            else "CUDA build present but no GPU execution backend was configured."
-        )
+        if args.gpu:
+            query["gpu"] = measure_qe(
+                data_dir,
+                query["sql"],
+                args.batch_size,
+                args.repeats,
+                args.warmups,
+                "--gpu",
+            )
+            gpu_info = query["gpu"].get("gpu")
+            query["gpu_reason"] = (
+                None
+                if query["gpu"].get("gpu_used")
+                else (gpu_info.get("reason") if gpu_info else "no GPU timing line")
+            )
+        else:
+            query["gpu"] = None
+            if not engine["cuda"]:
+                query["gpu_reason"] = "No CUDA kernel in this build; no GPU timings are fabricated."
+            else:
+                query["gpu_reason"] = "CUDA build present; rerun with --gpu to measure it."
+        gpu_text = ""
+        if query["gpu"] and query["gpu"].get("gpu_used"):
+            gpu_text = f", GPU {query['gpu']['median_ms']:.2f} ms"
         print(
-            f"  {query['id']}: CPU {query['cpu']['median_ms']:.2f} ms, "
-            f"DuckDB {query['duckdb']['median_ms']:.2f} ms"
+            f"  {query['id']}: CPU {query['cpu']['median_ms']:.2f} ms"
+            f"{gpu_text}, DuckDB {query['duckdb']['median_ms']:.2f} ms"
         )
     conn.close()
 
+    summary = summarize(query_results, gpu_available, args.gpu)
     results = {
         "schema_version": 1,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "status": "completed_cpu_only" if not engine["cuda"] else "completed",
+        "status": (
+            "completed_cpu_and_gpu"
+            if args.gpu and summary["gpu_queries"]
+            else ("completed_cpu_only" if not args.gpu else "completed_gpu_requested_no_gpu_rows")
+        ),
         "engine": engine,
         "gpu": gpu,
         "environment": get_environment(),
@@ -510,13 +724,15 @@ def main() -> int:
             "warmups": args.warmups,
             "duckdb_threads": duckdb_threads,
             "cpu_threads": 1,
+            "gpu_requested": args.gpu,
+            "gpu_available": gpu_available,
             "timer": "CLI internal execute_ms (scan open through result materialization)",
             "duckdb_timer": "Python client execute + fetchall in the same process",
             "data_dir": str(data_dir),
         },
         "queries": query_results,
     }
-    results["summary"] = summarize(query_results)
+    results["summary"] = summary
 
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
