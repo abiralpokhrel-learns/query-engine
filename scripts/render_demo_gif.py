@@ -235,7 +235,7 @@ def style_color(line: str, style: str) -> str:
     return TEXT
 
 
-def render_frame(state: ScreenState, height: int) -> Image.Image:
+def render_frame(state: ScreenState, height: int, build_label: str) -> Image.Image:
     image = Image.new("RGB", (WIDTH, height), BACKGROUND)
     draw = ImageDraw.Draw(image)
     body_font = load_font(FONT_SIZE)
@@ -259,7 +259,7 @@ def render_frame(state: ScreenState, height: int) -> Image.Image:
         font=title_font,
         anchor="mm",
     )
-    draw.text((WIDTH - 22, dot_y), "CPU build", fill=BLUE, font=title_font, anchor="rm")
+    draw.text((WIDTH - 22, dot_y), build_label, fill=BLUE, font=title_font, anchor="rm")
 
     prompt = "~/query-engine$ "
     prompt_width = body_font.getlength(prompt)
@@ -320,6 +320,12 @@ def main() -> int:
     scenes = build_scenes(cli)
     captured = [(scene, capture(scene)) for scene in scenes]
     states = build_states(captured, WIDTH)
+    version_lines = captured[0][1]
+    build_label = (
+        "CUDA build"
+        if any(line.startswith("cuda: enabled") for line in version_lines)
+        else "CPU build"
+    )
 
     max_lines = max(len(state.lines) for state in states)
     height = max(720, TOP + max_lines * LINE_HEIGHT + FOOTER_HEIGHT + 24)
@@ -329,7 +335,9 @@ def main() -> int:
     poster.parent.mkdir(parents=True, exist_ok=True)
 
     frames = [
-        render_frame(state, height).convert("P", palette=Image.Palette.ADAPTIVE, colors=128)
+        render_frame(state, height, build_label).convert(
+            "P", palette=Image.Palette.ADAPTIVE, colors=128
+        )
         for state in states
     ]
     frames[0].save(
@@ -345,7 +353,7 @@ def main() -> int:
     poster_state = next(
         state for state in reversed(states) if state.lines and state.lines[-1][1] == "output"
     )
-    render_frame(poster_state, height).save(poster, optimize=True)
+    render_frame(poster_state, height, build_label).save(poster, optimize=True)
 
     print(
         f"wrote {output.relative_to(ROOT) if output.is_relative_to(ROOT) else output} "
