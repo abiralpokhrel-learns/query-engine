@@ -39,6 +39,7 @@ or estimate a result.
 - [ ] User-visible SQL behavior is documented in `README.md`.
 - [ ] `CHANGELOG.md` is updated under `Unreleased`.
 - [ ] `clang-format` and `ruff format` have been run.
+- [ ] README media, if changed, was regenerated from its source script rather than hand-edited.
 - [ ] CI is expected to pass, including ASan/UBSan and coverage.
 - [ ] No benchmark, GPU, or performance number is fabricated or estimated.
 
