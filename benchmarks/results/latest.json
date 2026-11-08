@@ -1,20 +1,29 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-06T16:06:19.874094+00:00",
-  "status": "completed_cpu_only",
+  "generated_at": "2026-11-08T07:07:28.142414+00:00",
+  "status": "completed_cpu_and_gpu",
   "engine": {
     "version_text": [
       "qe-cli 0.2.0",
       "arrow: 13.0.0",
-      "cuda: unavailable (CPU-only build)"
+      "cuda: enabled (NVIDIA GeForce RTX 3050 Laptop GPU, 4095 MiB, compute 8.6, cuda_driver_api=13.1)",
+      "cuda_ops: global-aggregate"
     ],
     "name": "qe-cli",
     "version": "0.2.0",
-    "cuda": false
+    "cuda": true,
+    "cuda_line": "cuda: enabled (NVIDIA GeForce RTX 3050 Laptop GPU, 4095 MiB, compute 8.6, cuda_driver_api=13.1)",
+    "cuda_device": "NVIDIA GeForce RTX 3050 Laptop GPU, 4095 MiB, compute 8.6, cuda_driver_api=13.1"
   },
   "gpu": {
-    "available": false,
-    "reason": "Failed to initialize NVML: N/A"
+    "available": true,
+    "gpus": [
+      {
+        "name": "NVIDIA GeForce RTX 3050 Laptop GPU",
+        "memory": "4096 MiB",
+        "driver": "591.84"
+      }
+    ]
   },
   "environment": {
     "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
@@ -274,10 +283,12 @@
   },
   "config": {
     "batch_size": 8192,
-    "repeats": 5,
-    "warmups": 2,
+    "repeats": 3,
+    "warmups": 1,
     "duckdb_threads": 16,
     "cpu_threads": 1,
+    "gpu_requested": true,
+    "gpu_available": true,
     "timer": "CLI internal execute_ms (scan open through result materialization)",
     "duckdb_timer": "Python client execute + fetchall in the same process",
     "data_dir": "/mnt/c/query engine/data/bench"
@@ -299,39 +310,189 @@
           "type": "double"
         }
       ],
+      "gpu": {
+        "runs_ms": [
+          11.356,
+          5.019,
+          6.119
+        ],
+        "median_ms": 6.119,
+        "min_ms": 5.019,
+        "max_ms": 11.356,
+        "parse_ms": 0.046,
+        "plan_ms": 1.022,
+        "catalog_ms": 7.209,
+        "batch_size": 8192,
+        "transfer_ms": 0.205,
+        "kernel_ms": 0.06,
+        "gpu": {
+          "used": true,
+          "batches": 1,
+          "transfer_ms": 0.205,
+          "kernel_ms": 0.06,
+          "reason": null
+        },
+        "gpu_used": true,
+        "gpu_batches": 1,
+        "gpu_reason": null
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": true,
+          "batches": 1,
+          "transfer_ms": 0.188,
+          "kernel_ms": 0.045,
+          "reason": null
+        }
+      },
       "cpu": {
         "runs_ms": [
-          23.071,
-          10.55,
-          9.217,
-          7.483,
-          6.989
+          9.291,
+          4.25,
+          3.979
         ],
-        "median_ms": 9.217,
-        "min_ms": 6.989,
-        "max_ms": 23.071,
-        "parse_ms": 0.245,
-        "plan_ms": 2.5,
-        "catalog_ms": 16.47,
+        "median_ms": 4.25,
+        "min_ms": 3.979,
+        "max_ms": 9.291,
+        "parse_ms": 0.033,
+        "plan_ms": 0.964,
+        "catalog_ms": 6.854,
         "batch_size": 8192,
         "transfer_ms": null,
-        "kernel_ms": null
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
       },
       "duckdb": {
         "runs_ms": [
-          27.978025,
-          25.974317,
-          25.011344,
-          32.497388,
-          28.035774
+          19.748285,
+          19.936717,
+          18.250426
         ],
-        "median_ms": 27.978025,
-        "min_ms": 25.011344,
-        "max_ms": 32.497388,
+        "median_ms": 19.748285,
+        "min_ms": 18.250426,
+        "max_ms": 19.936717,
         "threads": 16
       },
-      "gpu": null,
-      "gpu_reason": "No CUDA kernel in this build; no GPU timings are fabricated."
+      "gpu_reason": null
+    },
+    {
+      "id": "global_aggregate",
+      "description": "Full-table global COUNT/SUM/AVG; exercises the optional CUDA aggregate path.",
+      "sql": "SELECT COUNT(*), SUM(amount), AVG(amount) FROM sales",
+      "verified": true,
+      "row_count": 1,
+      "columns": [
+        {
+          "name": "count(*)",
+          "type": "int64"
+        },
+        {
+          "name": "sum(sales.amount)",
+          "type": "double"
+        },
+        {
+          "name": "avg(sales.amount)",
+          "type": "double"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          61.161,
+          59.03,
+          50.547
+        ],
+        "median_ms": 59.03,
+        "min_ms": 50.547,
+        "max_ms": 61.161,
+        "parse_ms": 0.07,
+        "plan_ms": 0.97,
+        "catalog_ms": 6.983,
+        "batch_size": 8192,
+        "transfer_ms": 2.272,
+        "kernel_ms": 0.184,
+        "gpu": {
+          "used": true,
+          "batches": 2,
+          "transfer_ms": 2.272,
+          "kernel_ms": 0.184,
+          "reason": null
+        },
+        "gpu_used": true,
+        "gpu_batches": 2,
+        "gpu_reason": null
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "avg(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": true,
+          "batches": 2,
+          "transfer_ms": 2.35,
+          "kernel_ms": 0.579,
+          "reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          67.191,
+          64.123,
+          60.921
+        ],
+        "median_ms": 64.123,
+        "min_ms": 60.921,
+        "max_ms": 67.191,
+        "parse_ms": 0.032,
+        "plan_ms": 1.047,
+        "catalog_ms": 6.709,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          32.709536,
+          31.18907,
+          33.085879
+        ],
+        "median_ms": 32.709536,
+        "min_ms": 31.18907,
+        "max_ms": 33.085879,
+        "threads": 16
+      },
+      "gpu_reason": null
     },
     {
       "id": "empty_filter",
@@ -349,39 +510,85 @@
           "type": "double"
         }
       ],
-      "cpu": {
+      "gpu": {
         "runs_ms": [
-          4.87,
-          0.268,
-          0.176,
-          0.386,
-          0.18
+          2.579,
+          0.077,
+          0.068
         ],
-        "median_ms": 0.268,
-        "min_ms": 0.176,
-        "max_ms": 4.87,
-        "parse_ms": 0.039,
-        "plan_ms": 1.532,
-        "catalog_ms": 10.651,
+        "median_ms": 0.077,
+        "min_ms": 0.068,
+        "max_ms": 2.579,
+        "parse_ms": 0.047,
+        "plan_ms": 1.35,
+        "catalog_ms": 7.844,
         "batch_size": 8192,
         "transfer_ms": null,
-        "kernel_ms": null
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          2.974,
+          0.091,
+          0.068
+        ],
+        "median_ms": 0.091,
+        "min_ms": 0.068,
+        "max_ms": 2.974,
+        "parse_ms": 0.04,
+        "plan_ms": 1.013,
+        "catalog_ms": 7.063,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
       },
       "duckdb": {
         "runs_ms": [
-          13.890587,
-          14.268162,
-          13.725013,
-          13.364407,
-          14.146384
+          7.291829,
+          8.906626,
+          8.097995
         ],
-        "median_ms": 13.890587,
-        "min_ms": 13.364407,
-        "max_ms": 14.268162,
+        "median_ms": 8.097995,
+        "min_ms": 7.291829,
+        "max_ms": 8.906626,
         "threads": 16
       },
-      "gpu": null,
-      "gpu_reason": "No CUDA kernel in this build; no GPU timings are fabricated."
+      "gpu_reason": "no-supported-gpu-operator"
     },
     {
       "id": "group_region",
@@ -415,39 +622,101 @@
           "type": "double"
         }
       ],
-      "cpu": {
+      "gpu": {
         "runs_ms": [
-          257.374,
-          239.399,
-          244.752,
-          286.536,
-          236.578
+          176.623,
+          170.237,
+          168.866
         ],
-        "median_ms": 244.752,
-        "min_ms": 236.578,
-        "max_ms": 286.536,
-        "parse_ms": 0.05,
-        "plan_ms": 1.959,
-        "catalog_ms": 12.464,
+        "median_ms": 170.237,
+        "min_ms": 168.866,
+        "max_ms": 176.623,
+        "parse_ms": 0.039,
+        "plan_ms": 1.044,
+        "catalog_ms": 6.48,
         "batch_size": 8192,
         "transfer_ms": null,
-        "kernel_ms": null
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 9,
+        "columns": [
+          {
+            "name": "region",
+            "type": "string"
+          },
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "avg(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "min(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "max(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          183.483,
+          181.222,
+          187.546
+        ],
+        "median_ms": 183.483,
+        "min_ms": 181.222,
+        "max_ms": 187.546,
+        "parse_ms": 0.038,
+        "plan_ms": 1.097,
+        "catalog_ms": 6.943,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
       },
       "duckdb": {
         "runs_ms": [
-          63.784829,
-          55.26458,
-          55.479268,
-          55.287005,
-          50.864963
+          36.281022,
+          35.061222,
+          34.749502
         ],
-        "median_ms": 55.287005,
-        "min_ms": 50.864963,
-        "max_ms": 63.784829,
+        "median_ms": 35.061222,
+        "min_ms": 34.749502,
+        "max_ms": 36.281022,
         "threads": 16
       },
-      "gpu": null,
-      "gpu_reason": "No CUDA kernel in this build; no GPU timings are fabricated."
+      "gpu_reason": "no-supported-gpu-operator"
     },
     {
       "id": "group_customer",
@@ -473,39 +742,93 @@
           "type": "double"
         }
       ],
-      "cpu": {
+      "gpu": {
         "runs_ms": [
-          695.453,
-          682.74,
-          708.486,
-          691.024,
-          672.861
+          389.368,
+          377.954,
+          375.186
         ],
-        "median_ms": 691.024,
-        "min_ms": 672.861,
-        "max_ms": 708.486,
-        "parse_ms": 0.067,
-        "plan_ms": 1.512,
-        "catalog_ms": 11.962,
+        "median_ms": 377.954,
+        "min_ms": 375.186,
+        "max_ms": 389.368,
+        "parse_ms": 0.04,
+        "plan_ms": 1.042,
+        "catalog_ms": 8.475,
         "batch_size": 8192,
         "transfer_ms": null,
-        "kernel_ms": null
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 50001,
+        "columns": [
+          {
+            "name": "customer_id",
+            "type": "int64"
+          },
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "avg(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          436.165,
+          404.855,
+          382.052
+        ],
+        "median_ms": 404.855,
+        "min_ms": 382.052,
+        "max_ms": 436.165,
+        "parse_ms": 0.048,
+        "plan_ms": 1.04,
+        "catalog_ms": 8.159,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
       },
       "duckdb": {
         "runs_ms": [
-          133.049823,
-          173.761834,
-          140.49281,
-          132.006581,
-          138.219051
+          100.547537,
+          84.969801,
+          85.991231
         ],
-        "median_ms": 138.219051,
-        "min_ms": 132.006581,
-        "max_ms": 173.761834,
+        "median_ms": 85.991231,
+        "min_ms": 84.969801,
+        "max_ms": 100.547537,
         "threads": 16
       },
-      "gpu": null,
-      "gpu_reason": "No CUDA kernel in this build; no GPU timings are fabricated."
+      "gpu_reason": "no-supported-gpu-operator"
     },
     {
       "id": "topk",
@@ -523,39 +846,85 @@
           "type": "double"
         }
       ],
-      "cpu": {
+      "gpu": {
         "runs_ms": [
-          188.092,
-          164.456,
-          174.831,
-          155.656,
-          159.356
+          104.731,
+          104.633,
+          102.814
         ],
-        "median_ms": 164.456,
-        "min_ms": 155.656,
-        "max_ms": 188.092,
-        "parse_ms": 0.062,
-        "plan_ms": 1.856,
-        "catalog_ms": 10.559,
+        "median_ms": 104.633,
+        "min_ms": 102.814,
+        "max_ms": 104.731,
+        "parse_ms": 0.036,
+        "plan_ms": 0.897,
+        "catalog_ms": 6.766,
         "batch_size": 8192,
         "transfer_ms": null,
-        "kernel_ms": null
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 100,
+        "columns": [
+          {
+            "name": "sale_id",
+            "type": "int64"
+          },
+          {
+            "name": "amount",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          102.298,
+          108.34,
+          108.675
+        ],
+        "median_ms": 108.34,
+        "min_ms": 102.298,
+        "max_ms": 108.675,
+        "parse_ms": 0.032,
+        "plan_ms": 1.12,
+        "catalog_ms": 7.488,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
       },
       "duckdb": {
         "runs_ms": [
-          76.058435,
-          103.221286,
-          81.659339,
-          96.85672,
-          80.266135
+          51.325002,
+          51.623082,
+          53.270489
         ],
-        "median_ms": 81.659339,
-        "min_ms": 76.058435,
-        "max_ms": 103.221286,
+        "median_ms": 51.623082,
+        "min_ms": 51.325002,
+        "max_ms": 53.270489,
         "threads": 16
       },
-      "gpu": null,
-      "gpu_reason": "No CUDA kernel in this build; no GPU timings are fabricated."
+      "gpu_reason": "no-supported-gpu-operator"
     },
     {
       "id": "join_country",
@@ -577,39 +946,89 @@
           "type": "double"
         }
       ],
-      "cpu": {
+      "gpu": {
         "runs_ms": [
-          769.262,
-          792.292,
-          792.4,
-          762.718,
-          773.259
+          412.955,
+          401.226,
+          437.006
         ],
-        "median_ms": 773.259,
-        "min_ms": 762.718,
-        "max_ms": 792.4,
-        "parse_ms": 0.055,
-        "plan_ms": 1.697,
-        "catalog_ms": 13.493,
+        "median_ms": 412.955,
+        "min_ms": 401.226,
+        "max_ms": 437.006,
+        "parse_ms": 0.041,
+        "plan_ms": 0.964,
+        "catalog_ms": 8.146,
         "batch_size": 8192,
         "transfer_ms": null,
-        "kernel_ms": null
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 8,
+        "columns": [
+          {
+            "name": "country",
+            "type": "string"
+          },
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(s.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          416.324,
+          395.192,
+          456.681
+        ],
+        "median_ms": 416.324,
+        "min_ms": 395.192,
+        "max_ms": 456.681,
+        "parse_ms": 0.059,
+        "plan_ms": 1.267,
+        "catalog_ms": 6.991,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
       },
       "duckdb": {
         "runs_ms": [
-          121.311922,
-          117.019956,
-          106.999937,
-          98.860509,
-          112.362633
+          72.356233,
+          74.484995,
+          67.216056
         ],
-        "median_ms": 112.362633,
-        "min_ms": 98.860509,
-        "max_ms": 121.311922,
+        "median_ms": 72.356233,
+        "min_ms": 67.216056,
+        "max_ms": 74.484995,
         "threads": 16
       },
-      "gpu": null,
-      "gpu_reason": "No CUDA kernel in this build; no GPU timings are fabricated."
+      "gpu_reason": "no-supported-gpu-operator"
     },
     {
       "id": "count_star",
@@ -623,46 +1042,92 @@
           "type": "int64"
         }
       ],
-      "cpu": {
+      "gpu": {
         "runs_ms": [
-          1.42,
-          0.024,
-          0.006,
-          0.004,
-          0.004
+          0.721,
+          0.01,
+          0.007
         ],
-        "median_ms": 0.006,
-        "min_ms": 0.004,
-        "max_ms": 1.42,
-        "parse_ms": 0.046,
-        "plan_ms": 1.931,
-        "catalog_ms": 10.459,
+        "median_ms": 0.01,
+        "min_ms": 0.007,
+        "max_ms": 0.721,
+        "parse_ms": 0.027,
+        "plan_ms": 1.089,
+        "catalog_ms": 6.613,
         "batch_size": 8192,
         "transfer_ms": null,
-        "kernel_ms": null
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "count(*)",
+            "type": "int64"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          1.371,
+          0.02,
+          0.008
+        ],
+        "median_ms": 0.02,
+        "min_ms": 0.008,
+        "max_ms": 1.371,
+        "parse_ms": 0.036,
+        "plan_ms": 0.961,
+        "catalog_ms": 7.839,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
       },
       "duckdb": {
         "runs_ms": [
-          13.992947,
-          13.364653,
-          12.50996,
-          15.34732,
-          12.081805
+          7.941763,
+          6.564811,
+          7.086442
         ],
-        "median_ms": 13.364653,
-        "min_ms": 12.081805,
-        "max_ms": 15.34732,
+        "median_ms": 7.086442,
+        "min_ms": 6.564811,
+        "max_ms": 7.941763,
         "threads": 16
       },
-      "gpu": null,
-      "gpu_reason": "No CUDA kernel in this build; no GPU timings are fabricated."
+      "gpu_reason": "no-supported-gpu-operator"
     }
   ],
   "summary": {
     "cpu_wins": 3,
-    "duckdb_wins": 4,
+    "duckdb_wins": 5,
     "ties": 0,
-    "gpu_available": false,
-    "gpu_queries": 0
+    "gpu_available": true,
+    "gpu_requested": true,
+    "gpu_queries": 2,
+    "gpu_wins": 1,
+    "cpu_wins_over_gpu": 1,
+    "gpu_ties": 0
   }
 }
