@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-08T07:07:28.142414+00:00",
+  "generated_at": "2026-11-08T15:23:38.773752+00:00",
   "status": "completed_cpu_and_gpu",
   "engine": {
     "version_text": [
@@ -298,6 +298,7 @@
       "id": "filter_aggregate",
       "description": "One-month date range; row-group skipping plus COUNT/SUM.",
       "sql": "SELECT COUNT(*), SUM(amount) FROM sales WHERE sale_date >= '2025-01-01' AND sale_date < '2025-02-01'",
+      "regression_check": true,
       "verified": true,
       "row_count": 1,
       "columns": [
@@ -312,24 +313,24 @@
       ],
       "gpu": {
         "runs_ms": [
-          11.356,
-          5.019,
-          6.119
+          9.613,
+          4.984,
+          5.227
         ],
-        "median_ms": 6.119,
-        "min_ms": 5.019,
-        "max_ms": 11.356,
-        "parse_ms": 0.046,
-        "plan_ms": 1.022,
-        "catalog_ms": 7.209,
+        "median_ms": 5.227,
+        "min_ms": 4.984,
+        "max_ms": 9.613,
+        "parse_ms": 0.032,
+        "plan_ms": 0.796,
+        "catalog_ms": 7.152,
         "batch_size": 8192,
-        "transfer_ms": 0.205,
-        "kernel_ms": 0.06,
+        "transfer_ms": 0.329,
+        "kernel_ms": 0.106,
         "gpu": {
           "used": true,
           "batches": 1,
-          "transfer_ms": 0.205,
-          "kernel_ms": 0.06,
+          "transfer_ms": 0.329,
+          "kernel_ms": 0.106,
           "reason": null
         },
         "gpu_used": true,
@@ -352,23 +353,23 @@
         "gpu": {
           "used": true,
           "batches": 1,
-          "transfer_ms": 0.188,
-          "kernel_ms": 0.045,
+          "transfer_ms": 0.173,
+          "kernel_ms": 0.064,
           "reason": null
         }
       },
       "cpu": {
         "runs_ms": [
-          9.291,
-          4.25,
-          3.979
+          12.473,
+          4.877,
+          5.038
         ],
-        "median_ms": 4.25,
-        "min_ms": 3.979,
-        "max_ms": 9.291,
+        "median_ms": 5.038,
+        "min_ms": 4.877,
+        "max_ms": 12.473,
         "parse_ms": 0.033,
-        "plan_ms": 0.964,
-        "catalog_ms": 6.854,
+        "plan_ms": 1.36,
+        "catalog_ms": 6.564,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -379,13 +380,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          19.748285,
-          19.936717,
-          18.250426
+          16.344849,
+          15.984294,
+          15.517997
         ],
-        "median_ms": 19.748285,
-        "min_ms": 18.250426,
-        "max_ms": 19.936717,
+        "median_ms": 15.984294,
+        "min_ms": 15.517997,
+        "max_ms": 16.344849,
         "threads": 16
       },
       "gpu_reason": null
@@ -394,6 +395,7 @@
       "id": "global_aggregate",
       "description": "Full-table global COUNT/SUM/AVG; exercises the optional CUDA aggregate path.",
       "sql": "SELECT COUNT(*), SUM(amount), AVG(amount) FROM sales",
+      "regression_check": false,
       "verified": true,
       "row_count": 1,
       "columns": [
@@ -412,24 +414,24 @@
       ],
       "gpu": {
         "runs_ms": [
-          61.161,
-          59.03,
-          50.547
+          77.565,
+          66.361,
+          56.338
         ],
-        "median_ms": 59.03,
-        "min_ms": 50.547,
-        "max_ms": 61.161,
-        "parse_ms": 0.07,
-        "plan_ms": 0.97,
-        "catalog_ms": 6.983,
+        "median_ms": 66.361,
+        "min_ms": 56.338,
+        "max_ms": 77.565,
+        "parse_ms": 0.051,
+        "plan_ms": 1.084,
+        "catalog_ms": 11.028,
         "batch_size": 8192,
-        "transfer_ms": 2.272,
-        "kernel_ms": 0.184,
+        "transfer_ms": 2.682,
+        "kernel_ms": 0.18,
         "gpu": {
           "used": true,
           "batches": 2,
-          "transfer_ms": 2.272,
-          "kernel_ms": 0.184,
+          "transfer_ms": 2.682,
+          "kernel_ms": 0.18,
           "reason": null
         },
         "gpu_used": true,
@@ -456,23 +458,23 @@
         "gpu": {
           "used": true,
           "batches": 2,
-          "transfer_ms": 2.35,
-          "kernel_ms": 0.579,
+          "transfer_ms": 2.339,
+          "kernel_ms": 0.172,
           "reason": null
         }
       },
       "cpu": {
         "runs_ms": [
-          67.191,
-          64.123,
-          60.921
+          56.502,
+          60.205,
+          56.846
         ],
-        "median_ms": 64.123,
-        "min_ms": 60.921,
-        "max_ms": 67.191,
-        "parse_ms": 0.032,
-        "plan_ms": 1.047,
-        "catalog_ms": 6.709,
+        "median_ms": 56.846,
+        "min_ms": 56.502,
+        "max_ms": 60.205,
+        "parse_ms": 0.029,
+        "plan_ms": 0.772,
+        "catalog_ms": 6.787,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -483,13 +485,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          32.709536,
-          31.18907,
-          33.085879
+          28.385026,
+          28.302399,
+          31.527254
         ],
-        "median_ms": 32.709536,
-        "min_ms": 31.18907,
-        "max_ms": 33.085879,
+        "median_ms": 28.385026,
+        "min_ms": 28.302399,
+        "max_ms": 31.527254,
         "threads": 16
       },
       "gpu_reason": null
@@ -498,6 +500,7 @@
       "id": "empty_filter",
       "description": "Date range after the data; all row groups can be skipped.",
       "sql": "SELECT COUNT(*), SUM(amount) FROM sales WHERE sale_date > '2030-01-01'",
+      "regression_check": true,
       "verified": true,
       "row_count": 1,
       "columns": [
@@ -512,16 +515,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          2.579,
-          0.077,
-          0.068
+          3.452,
+          0.143,
+          0.091
         ],
-        "median_ms": 0.077,
-        "min_ms": 0.068,
-        "max_ms": 2.579,
-        "parse_ms": 0.047,
-        "plan_ms": 1.35,
-        "catalog_ms": 7.844,
+        "median_ms": 0.143,
+        "min_ms": 0.091,
+        "max_ms": 3.452,
+        "parse_ms": 0.035,
+        "plan_ms": 1.016,
+        "catalog_ms": 8.332,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -559,16 +562,16 @@
       },
       "cpu": {
         "runs_ms": [
-          2.974,
-          0.091,
-          0.068
+          3.221,
+          0.223,
+          0.162
         ],
-        "median_ms": 0.091,
-        "min_ms": 0.068,
-        "max_ms": 2.974,
-        "parse_ms": 0.04,
-        "plan_ms": 1.013,
-        "catalog_ms": 7.063,
+        "median_ms": 0.223,
+        "min_ms": 0.162,
+        "max_ms": 3.221,
+        "parse_ms": 0.057,
+        "plan_ms": 1.361,
+        "catalog_ms": 8.303,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -579,13 +582,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          7.291829,
-          8.906626,
-          8.097995
+          10.119987,
+          10.144458,
+          11.174486
         ],
-        "median_ms": 8.097995,
-        "min_ms": 7.291829,
-        "max_ms": 8.906626,
+        "median_ms": 10.144458,
+        "min_ms": 10.119987,
+        "max_ms": 11.174486,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -594,6 +597,7 @@
       "id": "group_region",
       "description": "Low-cardinality GROUP BY with five aggregates.",
       "sql": "SELECT region, COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales GROUP BY region ORDER BY region",
+      "regression_check": true,
       "verified": true,
       "row_count": 9,
       "columns": [
@@ -624,16 +628,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          176.623,
-          170.237,
-          168.866
+          150.062,
+          142.992,
+          159.152
         ],
-        "median_ms": 170.237,
-        "min_ms": 168.866,
-        "max_ms": 176.623,
-        "parse_ms": 0.039,
-        "plan_ms": 1.044,
-        "catalog_ms": 6.48,
+        "median_ms": 150.062,
+        "min_ms": 142.992,
+        "max_ms": 159.152,
+        "parse_ms": 0.049,
+        "plan_ms": 0.882,
+        "catalog_ms": 6.211,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -687,16 +691,16 @@
       },
       "cpu": {
         "runs_ms": [
-          183.483,
-          181.222,
-          187.546
+          172.136,
+          170.152,
+          179.083
         ],
-        "median_ms": 183.483,
-        "min_ms": 181.222,
-        "max_ms": 187.546,
-        "parse_ms": 0.038,
-        "plan_ms": 1.097,
-        "catalog_ms": 6.943,
+        "median_ms": 172.136,
+        "min_ms": 170.152,
+        "max_ms": 179.083,
+        "parse_ms": 0.058,
+        "plan_ms": 1.221,
+        "catalog_ms": 6.64,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -707,13 +711,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          36.281022,
-          35.061222,
-          34.749502
+          32.313734,
+          34.946118,
+          40.689439
         ],
-        "median_ms": 35.061222,
-        "min_ms": 34.749502,
-        "max_ms": 36.281022,
+        "median_ms": 34.946118,
+        "min_ms": 32.313734,
+        "max_ms": 40.689439,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -722,6 +726,7 @@
       "id": "group_customer",
       "description": "High-cardinality GROUP BY (one group per customer).",
       "sql": "SELECT customer_id, COUNT(*), SUM(amount), AVG(amount) FROM sales GROUP BY customer_id ORDER BY customer_id",
+      "regression_check": true,
       "verified": true,
       "row_count": 50001,
       "columns": [
@@ -744,16 +749,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          389.368,
-          377.954,
-          375.186
+          418.613,
+          388.297,
+          390.012
         ],
-        "median_ms": 377.954,
-        "min_ms": 375.186,
-        "max_ms": 389.368,
-        "parse_ms": 0.04,
-        "plan_ms": 1.042,
-        "catalog_ms": 8.475,
+        "median_ms": 390.012,
+        "min_ms": 388.297,
+        "max_ms": 418.613,
+        "parse_ms": 0.033,
+        "plan_ms": 0.84,
+        "catalog_ms": 6.277,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -799,16 +804,16 @@
       },
       "cpu": {
         "runs_ms": [
-          436.165,
-          404.855,
-          382.052
+          555.511,
+          559.406,
+          428.157
         ],
-        "median_ms": 404.855,
-        "min_ms": 382.052,
-        "max_ms": 436.165,
-        "parse_ms": 0.048,
-        "plan_ms": 1.04,
-        "catalog_ms": 8.159,
+        "median_ms": 555.511,
+        "min_ms": 428.157,
+        "max_ms": 559.406,
+        "parse_ms": 0.056,
+        "plan_ms": 1.32,
+        "catalog_ms": 8.675,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -819,13 +824,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          100.547537,
-          84.969801,
-          85.991231
+          81.840357,
+          80.269482,
+          81.971217
         ],
-        "median_ms": 85.991231,
-        "min_ms": 84.969801,
-        "max_ms": 100.547537,
+        "median_ms": 81.840357,
+        "min_ms": 80.269482,
+        "max_ms": 81.971217,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -834,6 +839,7 @@
       "id": "topk",
       "description": "Selective filter, top-k sort, then LIMIT.",
       "sql": "SELECT sale_id, amount FROM sales WHERE amount > 1000 ORDER BY amount DESC LIMIT 100",
+      "regression_check": true,
       "verified": true,
       "row_count": 100,
       "columns": [
@@ -848,16 +854,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          104.731,
-          104.633,
-          102.814
+          92.905,
+          84.384,
+          87.281
         ],
-        "median_ms": 104.633,
-        "min_ms": 102.814,
-        "max_ms": 104.731,
-        "parse_ms": 0.036,
-        "plan_ms": 0.897,
-        "catalog_ms": 6.766,
+        "median_ms": 87.281,
+        "min_ms": 84.384,
+        "max_ms": 92.905,
+        "parse_ms": 0.033,
+        "plan_ms": 0.79,
+        "catalog_ms": 6.783,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -895,16 +901,16 @@
       },
       "cpu": {
         "runs_ms": [
-          102.298,
-          108.34,
-          108.675
+          97.832,
+          93.554,
+          87.352
         ],
-        "median_ms": 108.34,
-        "min_ms": 102.298,
-        "max_ms": 108.675,
-        "parse_ms": 0.032,
-        "plan_ms": 1.12,
-        "catalog_ms": 7.488,
+        "median_ms": 93.554,
+        "min_ms": 87.352,
+        "max_ms": 97.832,
+        "parse_ms": 0.031,
+        "plan_ms": 0.851,
+        "catalog_ms": 6.767,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -915,13 +921,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          51.325002,
-          51.623082,
-          53.270489
+          42.112455,
+          41.890779,
+          43.140354
         ],
-        "median_ms": 51.623082,
-        "min_ms": 51.325002,
-        "max_ms": 53.270489,
+        "median_ms": 42.112455,
+        "min_ms": 41.890779,
+        "max_ms": 43.140354,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -930,6 +936,7 @@
       "id": "join_country",
       "description": "Hash join against customers, then aggregate by country.",
       "sql": "SELECT c.country, COUNT(*), SUM(s.amount) FROM sales s JOIN customers c ON s.customer_id = c.customer_id GROUP BY c.country ORDER BY c.country",
+      "regression_check": true,
       "verified": true,
       "row_count": 8,
       "columns": [
@@ -948,16 +955,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          412.955,
-          401.226,
-          437.006
+          519.505,
+          585.415,
+          487.212
         ],
-        "median_ms": 412.955,
-        "min_ms": 401.226,
-        "max_ms": 437.006,
-        "parse_ms": 0.041,
-        "plan_ms": 0.964,
-        "catalog_ms": 8.146,
+        "median_ms": 519.505,
+        "min_ms": 487.212,
+        "max_ms": 585.415,
+        "parse_ms": 0.06,
+        "plan_ms": 1.157,
+        "catalog_ms": 9.502,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -999,16 +1006,16 @@
       },
       "cpu": {
         "runs_ms": [
-          416.324,
-          395.192,
-          456.681
+          429.336,
+          435.343,
+          476.1
         ],
-        "median_ms": 416.324,
-        "min_ms": 395.192,
-        "max_ms": 456.681,
-        "parse_ms": 0.059,
-        "plan_ms": 1.267,
-        "catalog_ms": 6.991,
+        "median_ms": 435.343,
+        "min_ms": 429.336,
+        "max_ms": 476.1,
+        "parse_ms": 0.037,
+        "plan_ms": 0.865,
+        "catalog_ms": 6.406,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -1019,13 +1026,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          72.356233,
-          74.484995,
-          67.216056
+          58.863151,
+          60.63552,
+          64.100877
         ],
-        "median_ms": 72.356233,
-        "min_ms": 67.216056,
-        "max_ms": 74.484995,
+        "median_ms": 60.63552,
+        "min_ms": 58.863151,
+        "max_ms": 64.100877,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -1034,6 +1041,7 @@
       "id": "count_star",
       "description": "Full-table COUNT(*) answered from Parquet metadata by both engines.",
       "sql": "SELECT COUNT(*) FROM sales",
+      "regression_check": true,
       "verified": true,
       "row_count": 1,
       "columns": [
@@ -1044,16 +1052,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          0.721,
-          0.01,
-          0.007
+          1.105,
+          0.024,
+          0.016
         ],
-        "median_ms": 0.01,
-        "min_ms": 0.007,
-        "max_ms": 0.721,
-        "parse_ms": 0.027,
-        "plan_ms": 1.089,
-        "catalog_ms": 6.613,
+        "median_ms": 0.024,
+        "min_ms": 0.016,
+        "max_ms": 1.105,
+        "parse_ms": 0.035,
+        "plan_ms": 1.002,
+        "catalog_ms": 8.098,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -1087,16 +1095,16 @@
       },
       "cpu": {
         "runs_ms": [
-          1.371,
-          0.02,
-          0.008
+          1.149,
+          0.013,
+          0.004
         ],
-        "median_ms": 0.02,
-        "min_ms": 0.008,
-        "max_ms": 1.371,
-        "parse_ms": 0.036,
-        "plan_ms": 0.961,
-        "catalog_ms": 7.839,
+        "median_ms": 0.013,
+        "min_ms": 0.004,
+        "max_ms": 1.149,
+        "parse_ms": 0.034,
+        "plan_ms": 1.078,
+        "catalog_ms": 7.817,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -1107,13 +1115,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          7.941763,
-          6.564811,
-          7.086442
+          9.106005,
+          8.403764,
+          7.879022
         ],
-        "median_ms": 7.086442,
-        "min_ms": 6.564811,
-        "max_ms": 7.941763,
+        "median_ms": 8.403764,
+        "min_ms": 7.879022,
+        "max_ms": 9.106005,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -1126,8 +1134,8 @@
     "gpu_available": true,
     "gpu_requested": true,
     "gpu_queries": 2,
-    "gpu_wins": 1,
-    "cpu_wins_over_gpu": 1,
+    "gpu_wins": 0,
+    "cpu_wins_over_gpu": 2,
     "gpu_ties": 0
   }
 }

@@ -48,6 +48,10 @@ QUERIES = [
         "id": "global_aggregate",
         "description": "Full-table global COUNT/SUM/AVG; exercises the optional CUDA aggregate path.",
         "sql": "SELECT COUNT(*), SUM(amount), AVG(amount) FROM sales",
+        # DuckDB's thread scaling changes this scan-bound ratio much more than
+        # the other queries across CI runners. It is still verified and
+        # reported, but it is not used as a CPU regression gate.
+        "regression_check": False,
     },
     {
         "id": "empty_filter",
@@ -664,6 +668,7 @@ def main() -> int:
                 "id": spec["id"],
                 "description": spec["description"],
                 "sql": spec["sql"],
+                "regression_check": spec.get("regression_check", True),
                 **verification,
                 "gpu_verification": gpu_verification,
             }
