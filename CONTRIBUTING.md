@@ -40,8 +40,8 @@ micromamba activate qe
 ```
 
 `scripts/build.sh` honours `QE_PREFIX`, `CONDA_PREFIX`, `CMAKE_BIN`,
-`BUILD_DIR`, `CMAKE_BUILD_TYPE`, and `QE_WARNINGS_AS_ERRORS=ON`. It falls back
-to `~/qe-env` when no environment is active.
+`BUILD_DIR`, `CMAKE_BUILD_TYPE`, `QE_WARNINGS_AS_ERRORS=ON`, and
+`QE_ENABLE_CUDA=ON`. It falls back to `~/qe-env` when no environment is active.
 
 ## Build and test
 
@@ -57,6 +57,20 @@ The Python suite is the main correctness gate: it generates deterministic
 Parquet data, runs each query through `qe-cli` and DuckDB, and compares every
 value. It also checks batch-size invariance, row-group pruning, column pruning,
 and metadata-only `COUNT(*)`.
+
+For the optional CUDA build (requires `nvcc` and a visible NVIDIA device):
+
+```bash
+BUILD_DIR=build-cuda QE_ENABLE_CUDA=ON scripts/build.sh
+ctest --test-dir build-cuda --output-on-failure
+QE_CLI=build-cuda/qe-cli python -m pytest tests -q
+```
+
+The CUDA CTest self-test runs a real reduction and skips with code 77 when no
+device is present. The Python GPU tests are skipped unless
+`qe-cli --version` reports `cuda: enabled`; they compare GPU results with DuckDB
+and exercise the CPU-fallback paths. `CMAKE_CUDA_ARCHITECTURES` defaults to 86
+and can be overridden for other devices.
 
 For a sanitizer build:
 
@@ -113,19 +127,24 @@ behave as expected rather than assuming they do.
 
 Never invent a timing, a speedup, or a GPU result. The benchmark harness
 verifies every query against DuckDB before timing it and records the hardware,
-versions, dataset manifest, and every raw run. GPU fields stay `null` when no
-usable CUDA device is present.
+versions, dataset manifest, and every raw run. CPU-only runs leave GPU fields
+`null`; a `--gpu` run verifies GPU output against DuckDB and records the
+measured `gpu:` line. GPU fields stay `null` when no usable CUDA device is
+present.
 
 Run benchmarks with:
 
 ```bash
 python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2
+QE_CLI=build-cuda/qe-cli python scripts/run_benchmarks.py \
+  --rows 1000000 --repeats 3 --warmups 1 --gpu
 ```
 
 Every pull request runs a smaller benchmark verification job and compares
 CPU/DuckDB ratios with the committed baseline. Catastrophic regressions fail the
 check; ordinary noise does not. Performance-sensitive changes should still
-include a full local benchmark run with before/after numbers.
+include a full local benchmark run with before/after numbers. GPU changes must
+report the measured end-to-end, transfer, and kernel times, including losses.
 
 ## Pull requests
 
