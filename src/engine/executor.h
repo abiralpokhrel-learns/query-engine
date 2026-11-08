@@ -12,6 +12,9 @@ namespace qe {
 
 struct ExecutionOptions {
   int64_t batch_size = 8192;
+  // The CPU path is the default. --gpu opts into the optional CUDA aggregate
+  // operators; unsupported queries still fall back to the CPU implementation.
+  bool use_gpu = false;
 };
 
 struct ExecutionResult {

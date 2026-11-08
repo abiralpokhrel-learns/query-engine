@@ -16,6 +16,9 @@ CMAKE_ARGS=()
 if [[ "${QE_WARNINGS_AS_ERRORS:-OFF}" == "ON" ]]; then
   CMAKE_ARGS+=("-DQE_WARNINGS_AS_ERRORS=ON")
 fi
+if [[ "${QE_ENABLE_CUDA:-OFF}" == "ON" ]]; then
+  CMAKE_ARGS+=("-DQE_ENABLE_CUDA=ON")
+fi
 
 "$CMAKE_BIN" -S . -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}" \

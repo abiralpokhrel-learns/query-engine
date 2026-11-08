@@ -17,6 +17,7 @@
 #include "cli/printer.h"
 #include "engine/executor.h"
 #include "engine/plan.h"
+#include "gpu/cuda_runtime.h"
 #include "sql/sql.h"
 
 #ifndef QE_VERSION
@@ -45,6 +46,7 @@ struct Options {
   bool explain = false;
   int repeat = 1;
   bool show_stats = true;
+  bool use_gpu = false;
 };
 
 struct UsageError : std::runtime_error {
@@ -56,6 +58,14 @@ std::string Lower(std::string_view text) {
   std::transform(result.begin(), result.end(), result.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return result;
+}
+
+std::string CudaVersion(int version) {
+  if (version <= 0)
+    return "unknown";
+  std::ostringstream text;
+  text << version / 1000 << '.' << (version % 1000) / 10;
+  return text.str();
 }
 
 int64_t ParseInteger(const std::string& text, const std::string& option) {
@@ -116,6 +126,8 @@ void PrintUsage(std::ostream& out) {
       << "  --batch-size N        Vectorized batch size (default: 8192).\n"
       << "  --explain             Print the optimized plan and do not execute.\n"
       << "  --repeat N            Execute the query N times and report the last result.\n"
+      << "  --gpu                 Use the optional CUDA global-aggregate path where\n"
+      << "                        supported; the CPU path remains the default.\n"
       << "  --no-stats            Do not print scan statistics to stderr.\n"
       << "  -h, --help            Show this help.\n"
       << "  --version             Show the version.\n\n"
@@ -147,11 +159,21 @@ Options ParseOptions(int argc, char** argv) {
     if (arg == "--version") {
       std::cout << "qe-cli " << QE_VERSION << '\n';
       std::cout << "arrow: " << QE_ARROW_VERSION << '\n';
-#ifdef QE_ENABLE_CUDA
-      std::cout << "cuda: build flag set but no GPU kernels are implemented\n";
-#else
-      std::cout << "cuda: unavailable (CPU-only build)\n";
-#endif
+      const qe::gpu::DeviceInfo device = qe::gpu::QueryDevice();
+      if (device.available) {
+        std::cout << "cuda: enabled (" << device.name << ", "
+                  << (device.memory_bytes / (1024 * 1024)) << " MiB, compute " << device.major
+                  << "." << device.minor
+                  << ", cuda_driver_api=" << CudaVersion(device.driver_version) << ")\n";
+        std::cout << "cuda_ops: global-aggregate\n";
+      } else if (device.build_enabled) {
+        std::cout << "cuda: build enabled but unavailable";
+        if (!device.error.empty())
+          std::cout << " (" << device.error << ")";
+        std::cout << '\n';
+      } else {
+        std::cout << "cuda: unavailable (CPU-only build)\n";
+      }
       std::exit(0);
     }
     if (arg == "--explain") {
@@ -160,6 +182,10 @@ Options ParseOptions(int argc, char** argv) {
     }
     if (arg == "--no-stats") {
       options.show_stats = false;
+      continue;
+    }
+    if (arg == "--gpu") {
+      options.use_gpu = true;
       continue;
     }
     if (arg == "--table" || arg.rfind("--table=", 0) == 0) {
@@ -266,6 +292,19 @@ void PrintScanStats(const qe::ExecutionStats& stats) {
             << " rows_from_metadata=" << stats.rows_from_metadata << '\n';
 }
 
+void PrintGpuStats(const qe::ExecutionStats& stats) {
+  std::cerr << "gpu: used=" << (stats.gpu_used ? 1 : 0);
+  if (stats.gpu_used) {
+    std::cerr << " batches=" << stats.gpu_batches << " transfer_ms=" << stats.gpu_transfer_ms
+              << " kernel_ms=" << stats.gpu_kernel_ms;
+  } else if (stats.gpu_attempted) {
+    std::cerr << " reason=no-rows";
+  } else {
+    std::cerr << " reason=no-supported-gpu-operator";
+  }
+  std::cerr << '\n';
+}
+
 double Median(std::vector<double> values) {
   if (values.empty())
     return 0.0;
@@ -334,6 +373,26 @@ int Run(int argc, char** argv) {
 
   qe::ExecutionOptions execution_options;
   execution_options.batch_size = options.batch_size;
+  execution_options.use_gpu = options.use_gpu;
+  if (options.use_gpu) {
+    const qe::gpu::DeviceInfo device = qe::gpu::QueryDevice();
+    if (!device.build_enabled) {
+      std::cerr << "error: --gpu requires a build configured with -DQE_ENABLE_CUDA=ON\n";
+      return 1;
+    }
+    if (!device.available) {
+      std::cerr << "error: --gpu requested but no usable CUDA device: " << device.error << '\n';
+      return 1;
+    }
+    // Run one real kernel before the timed queries. This validates the device
+    // path and loads the CUDA module so the first timed query is not dominated
+    // by one-time runtime initialization.
+    const qe::gpu::SelfTest warmup = qe::gpu::RunSelfTest();
+    if (!warmup.ok) {
+      std::cerr << "error: GPU self-test failed: " << warmup.message << '\n';
+      return 1;
+    }
+  }
 
   qe::ExecutionResult result;
   std::vector<double> execute_times;
@@ -377,6 +436,8 @@ int Run(int argc, char** argv) {
               << " execute_max_ms=" << *std::max_element(execute_times.begin(), execute_times.end())
               << " total_ms=" << total_ms << " runs=" << options.repeat << '\n';
   }
+  if (options.use_gpu)
+    PrintGpuStats(result.stats);
   if (options.show_stats)
     PrintScanStats(result.stats);
   return 0;
