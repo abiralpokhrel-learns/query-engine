@@ -6,6 +6,10 @@
 [![CUDA optional](https://img.shields.io/badge/CUDA-optional-76B900?logo=nvidia&logoColor=white)](docs/engineering-writeup.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+<p align="center">
+  <img src="docs/assets/qe-cosmos-hero.gif" alt="qe — a columnar query engine, built from scratch. 175 tests, 1M rows, wins and losses both shown." width="100%">
+</p>
+
 A small SQL query engine built from first principles in C++20. It reads Apache
 Parquet, compiles a defined SQL subset into a vectorized operator pipeline, and
 returns results that are tested against DuckDB. A Python harness benchmarks the
