@@ -194,6 +194,10 @@ tables. These are the cases that tend to break naive implementations.
 6. writes timestamped JSON/Markdown plus `latest.json` / `latest.md`;
 7. renders charts from the stored JSON with `scripts/plot_benchmarks.py`.
 
+The `global_aggregate` query is verified and reported, but the pull-request check
+does not gate its CPU/DuckDB ratio: DuckDB's thread scaling makes that scan-bound
+ratio unstable across runners. The other benchmark queries remain gated at 3x.
+
 The engine timing is its internal `execute_ms`: opening the scan through result
 materialization, excluding process start, catalog load, parsing, and planning.
 DuckDB is timed from Python around `execute(...).fetchall()`, which includes its
@@ -221,14 +225,14 @@ DuckDB; the GPU runs are in Section 7.3.
 
 | Query | qe CPU (ms) | DuckDB (ms) | Ratio | Winner |
 |---|---:|---:|---:|---|
-| filter_aggregate | 4.25 | 19.75 | 0.22x | qe |
-| global_aggregate | 64.12 | 32.71 | 1.96x | DuckDB |
-| empty_filter | 0.09 | 8.10 | 0.01x | qe |
-| group_region | 183.48 | 35.06 | 5.23x | DuckDB |
-| group_customer | 404.86 | 85.99 | 4.71x | DuckDB |
-| topk | 108.34 | 51.62 | 2.10x | DuckDB |
-| join_country | 416.32 | 72.36 | 5.75x | DuckDB |
-| count_star | 0.02 | 7.09 | 0.00x | qe |
+| filter_aggregate | 5.04 | 15.98 | 0.32x | qe |
+| global_aggregate | 56.85 | 28.39 | 2.00x | DuckDB |
+| empty_filter | 0.22 | 10.14 | 0.02x | qe |
+| group_region | 172.14 | 34.95 | 4.93x | DuckDB |
+| group_customer | 555.51 | 81.84 | 6.79x | DuckDB |
+| topk | 93.55 | 42.11 | 2.22x | DuckDB |
+| join_country | 435.34 | 60.64 | 7.18x | DuckDB |
+| count_star | 0.01 | 8.40 | 0.00x | qe |
 
 ### Why the engine wins three queries
 
@@ -249,17 +253,17 @@ real, not because it generalizes.
 - **`global_aggregate`**: the full-table `SUM`/`AVG` still runs through the
   row-wise aggregate loop on the CPU. DuckDB's vectorized, multi-threaded
   aggregate is about 2x faster. The optional GPU path is compared in Section
-  7.3; it narrows the gap but does not beat DuckDB.
+  7.3; it narrows the gap but does not beat DuckDB or reliably beat the CPU.
 - **`group_region` / `group_customer`**: the aggregate consumes a batch row by
   row, hashing a serialized key for each row. DuckDB uses vectorized,
-  multi-threaded hash aggregation. The engine is roughly 4.7-5.2x slower even
+  multi-threaded hash aggregation. The engine is roughly 4.9-6.8x slower even
   after the optimization described below.
 - **`join_country`**: the hash join builds and probes row by row, then feeds a
   row-wise aggregate. DuckDB's join and aggregate pipelines are vectorized and
-  parallel; the gap is about 5.8x.
+  parallel; the gap is about 7.2x.
 - **`topk`**: the engine now partitions to the top K before sorting, but it still
   scans and filters every batch with one thread and hashes no work away. DuckDB
-  combines a parallel scan with its own top-k path; the gap is about 2.1x.
+  combines a parallel scan with its own top-k path; the gap is about 2.2x.
 
 The honest conclusion is the one in the brief: a student-built engine should
 not be expected to beat a mature vectorized engine overall. The value is in the
@@ -386,18 +390,20 @@ kernel columns are the separately measured CUDA components.
 
 | Query | CPU (ms) | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |
 |---|---:|---:|---:|---:|---:|
-| `filter_aggregate` | 4.25 | 6.12 | 0.205 | 0.060 | 1.44x |
-| `global_aggregate` | 64.12 | 59.03 | 2.272 | 0.184 | 0.92x |
+| `filter_aggregate` | 5.04 | 5.23 | 0.329 | 0.106 | 1.04x |
+| `global_aggregate` | 56.85 | 66.36 | 2.682 | 0.180 | 1.17x |
 
-The result is mixed, and both directions are reported. On
-`filter_aggregate`, the kernel and transfer are tiny, but workspace setup and
-host buffering cost more than the 4.25 ms CPU query, so the GPU path is slower
-end to end. On `global_aggregate`, moving `SUM` and `AVG` over one million rows
-to the GPU just offsets that overhead and produces a small 0.92x GPU/CPU win.
-DuckDB remains much faster on both queries because it vectorizes and
-multi-threads the scan and aggregation; at this data size the Parquet scan and
-row-wise host work dominate. The GPU is not claimed to accelerate queries that
-spend most of their time decoding Parquet.
+The result is reported without a speedup claim. On `filter_aggregate`, the
+kernel and transfer are tiny, but workspace setup and host buffering cost
+slightly more than the 5.04 ms CPU query, so the GPU path is essentially tied
+and 1.04x slower end to end. On `global_aggregate`, moving `SUM` and `AVG` over
+one million rows to the GPU does not offset the host-side buffering: 66.36 ms
+versus 56.85 ms on the CPU, a 1.17x GPU/CPU ratio. Repeated local runs of the
+full-table sum straddle 1.0x, so the honest conclusion is roughly tied at best.
+DuckDB remains faster on both queries because it vectorizes and multi-threads the
+scan and aggregation; at this data size the Parquet scan and row-wise host work
+dominate. The GPU is not claimed to accelerate queries that spend most of their
+time decoding Parquet.
 
 ### 7.4 Remaining GPU work
 
@@ -468,9 +474,9 @@ Version 2 work still open, in priority order:
 - **Scope discipline is the finish line.** The GPU path was implemented only
   after the RTX 3050 became visible and a real reduction could be verified.
   Keeping it opt-in preserved the CPU engine's default behavior, and the
-  benchmark reports the mixed outcome: one global aggregate narrowly wins on
-  the GPU, one filtered aggregate loses to it because scan and setup costs
-  dominate.
+  benchmark reports the honest outcome: in the committed run both GPU paths are
+  slower end to end, though the global aggregate is close; scan and host
+  setup costs dominate.
 
 ## 10. Reproducing everything
 

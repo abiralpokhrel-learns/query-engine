@@ -253,8 +253,10 @@ artifact, and updates the repository-hosted coverage badge from `main`.
 The harness verifies every query against DuckDB before timing it, then records
 warm-ups, repeats, raw runs, medians, query text, hardware, library versions,
 and the dataset manifest. Charts are rendered from the stored JSON, never from
-hand-typed numbers. Pull requests run the same harness and fail if a query's
-CPU/DuckDB ratio grows more than 3x beyond the committed baseline.
+hand-typed numbers. Pull requests run the same harness and fail if a gated query's
+CPU/DuckDB ratio grows more than 3x beyond the committed baseline. The new
+`global_aggregate` query is verified and reported, but it is not a gate because
+DuckDB's thread scaling makes its scan-bound ratio unstable across CI runners.
 
 ```bash
 python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2
@@ -272,14 +274,14 @@ before timing so CUDA module loading is not charged to the first query.
 
 | Query | qe CPU (ms) | qe GPU (ms) | DuckDB (ms) | CPU / DuckDB | GPU / CPU | GPU path |
 |---|---:|---:|---:|---:|---:|---|
-| filter_aggregate | 4.25 | 6.12 | 19.75 | 0.22x | 1.44x | CUDA |
-| global_aggregate | 64.12 | 59.03 | 32.71 | 1.96x | 0.92x | CUDA |
-| empty_filter | 0.09 | - | 8.10 | 0.01x | - | CPU fallback |
-| group_region | 183.48 | - | 35.06 | 5.23x | - | CPU fallback |
-| group_customer | 404.86 | - | 85.99 | 4.71x | - | CPU fallback |
-| topk | 108.34 | - | 51.62 | 2.10x | - | CPU fallback |
-| join_country | 416.32 | - | 72.36 | 5.75x | - | CPU fallback |
-| count_star | 0.02 | - | 7.09 | 0.00x | - | CPU fallback |
+| filter_aggregate | 5.04 | 5.23 | 15.98 | 0.32x | 1.04x | CUDA |
+| global_aggregate | 56.85 | 66.36 | 28.39 | 2.00x | 1.17x | CUDA |
+| empty_filter | 0.22 | - | 10.14 | 0.02x | - | CPU fallback |
+| group_region | 172.14 | - | 34.95 | 4.93x | - | CPU fallback |
+| group_customer | 555.51 | - | 81.84 | 6.79x | - | CPU fallback |
+| topk | 93.55 | - | 42.11 | 2.22x | - | CPU fallback |
+| join_country | 435.34 | - | 60.64 | 7.18x | - | CPU fallback |
+| count_star | 0.01 | - | 8.40 | 0.00x | - | CPU fallback |
 
 Wins and losses are both reported. The engine wins on selective scans because
 Parquet row-group statistics let it skip data and because its scan pipeline has
@@ -290,15 +292,17 @@ DuckDB uses vectorized, multi-threaded operators. See the
 [engineering write-up](docs/engineering-writeup.md) for the analysis and for the
 optimization that cut the low-cardinality `GROUP BY` from 5.1 s to around 0.25 s.
 
-The GPU result is deliberately mixed. On `filter_aggregate`, the GPU kernel
-itself is small (0.060 ms kernel, 0.205 ms transfer), but workspace setup and
-host buffering cost more than the 4.25 ms CPU query, so the GPU path is 1.44x
-slower end to end. On `global_aggregate`, moving the floating-point `SUM`/`AVG`
-work to the GPU just offsets that overhead: 59.03 ms versus 64.12 ms on the CPU,
-a 0.92x GPU/CPU ratio. The GPU path is still slower than DuckDB's vectorized,
-multi-threaded aggregate. These are measured end-to-end query times, not
-transfer-only or kernel-only speedups; the raw per-run values and separate
-transfer/kernel timings are in
+The GPU result is deliberately not presented as a win. On `filter_aggregate`,
+the GPU kernel itself is small (0.106 ms kernel, 0.329 ms transfer), but
+workspace setup and host buffering cost slightly more than the 5.04 ms CPU
+query, so the GPU path is 1.04x slower end to end. On `global_aggregate`, moving
+the floating-point `SUM`/`AVG` work to the GPU does not offset that overhead:
+66.36 ms versus 56.85 ms on the CPU, a 1.17x GPU/CPU ratio. The GPU path is also
+slower than DuckDB's vectorized, multi-threaded aggregate. Repeated local runs
+of the full-table sum straddle 1.0x, so the honest conclusion is that the
+current path is roughly tied at best; the scan and host buffering dominate.
+These are measured end-to-end query times, not transfer-only or kernel-only
+speedups; the raw per-run values and separate transfer/kernel timings are in
 [`benchmarks/results/latest.json`](benchmarks/results/latest.json) and
 [`benchmarks/results/latest.md`](benchmarks/results/latest.md). Grouped
 aggregates, filters, joins, integer sums, and `MIN`/`MAX` stay on the CPU.

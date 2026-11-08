@@ -142,7 +142,9 @@ QE_CLI=build-cuda/qe-cli python scripts/run_benchmarks.py \
 
 Every pull request runs a smaller benchmark verification job and compares
 CPU/DuckDB ratios with the committed baseline. Catastrophic regressions fail the
-check; ordinary noise does not. Performance-sensitive changes should still
+check; ordinary noise does not. The scan-bound `global_aggregate` query is
+verified and reported but is not gated because DuckDB's thread scaling makes its
+ratio unstable across CI runners. Performance-sensitive changes should still
 include a full local benchmark run with before/after numbers. GPU changes must
 report the measured end-to-end, transfer, and kernel times, including losses.
 
