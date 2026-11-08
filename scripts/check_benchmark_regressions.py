@@ -5,7 +5,10 @@ The comparison uses the CPU/DuckDB median ratio rather than absolute wall time,
 so it remains meaningful on a different CI runner. A query is flagged when its
 ratio grows by more than ``--factor`` (3x by default). Queries whose engine
 median is below one millisecond are skipped because scheduler noise dominates
-those measurements.
+those measurements. Queries marked ``regression_check: false`` in the baseline
+are still verified and reported, but are not used as CPU regression gates; the
+scan-bound ``global_aggregate`` query uses this because DuckDB's thread scaling
+makes its cross-runner ratio unstable.
 
 Example:
     python scripts/check_benchmark_regressions.py \
@@ -93,6 +96,9 @@ def main() -> int:
         if not current_query.get("verified", False):
             print(f"{query_id:<20} {'-':>9} {'-':>9} {'-':>9}  FAIL (not verified)")
             failures += 1
+            continue
+        if base_query.get("regression_check", True) is False:
+            print(f"{query_id:<20} {'-':>9} {'-':>9} {'-':>9}  skip (not gated)")
             continue
 
         base_ratio = ratio(base_query)
