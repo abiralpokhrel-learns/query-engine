@@ -11,6 +11,9 @@ three rules that define it:
 3. **Unsupported work is refused clearly.** The parser rejects SQL outside the
    documented subset instead of guessing.
 
+Participation is governed by the [code of conduct](CODE_OF_CONDUCT.md). Security
+reports follow the private process in [SECURITY.md](SECURITY.md).
+
 ## Development workflow
 
 `main` is protected. Every change must go through a pull request with green CI.
@@ -89,6 +92,7 @@ QE_CLI=build-sanitize/qe-cli python -m pytest tests -q
 
 - C++ is formatted with `clang-format` (see `.clang-format`).
 - Python is formatted and linted with `ruff` (see `pyproject.toml`).
+- Shared whitespace/indent defaults are in `.editorconfig`.
 - CI builds with `-Wall -Wextra -Wpedantic -Werror`.
 
 Run the same checks locally before pushing:
@@ -147,6 +151,28 @@ verified and reported but is not gated because DuckDB's thread scaling makes its
 ratio unstable across CI runners. Performance-sensitive changes should still
 include a full local benchmark run with before/after numbers. GPU changes must
 report the measured end-to-end, transfer, and kernel times, including losses.
+
+## Visual assets
+
+The README terminal clip is a rendered transcript, not a screen recording.
+`scripts/render_demo_gif.py` runs `build/qe-cli` on the sample data, captures the
+real stdout/stderr, and writes both `docs/assets/demo.gif` and the static
+`docs/assets/demo-poster.png`. Regenerate both if the sample query or terminal
+styling changes:
+
+```bash
+python scripts/render_demo_gif.py
+```
+
+The benchmark chart is generated from stored JSON, never from hand-entered
+numbers:
+
+```bash
+python scripts/plot_benchmarks.py benchmarks/results/latest.json
+```
+
+Keep generated assets small, commit the GIF/PNG and their source script
+together, and do not make a visual claim that the data or tests do not support.
 
 ## Pull requests
 

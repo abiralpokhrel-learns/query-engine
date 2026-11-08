@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format follows
   repository-hosted coverage badge.
 - Pull-request benchmark verification with a ratio-based regression check.
 - Mermaid architecture diagram and a real CLI help transcript in the README.
+- README terminal demo (GIF and static poster) rendered from actual CLI output,
+  an embedded chart generated from the committed benchmark JSON, release/CUDA
+  badges, and a short engineering-highlights section.
+- Community health files: private vulnerability-reporting policy, code of
+  conduct, and cross-editor defaults.
 - Branch protection requiring pull requests and green CI before merge.
 - Optional CUDA global-aggregate path (`QE_ENABLE_CUDA`, `--gpu`) for
   no-`GROUP BY` queries that combine `COUNT` with floating-point `SUM`/`AVG`;

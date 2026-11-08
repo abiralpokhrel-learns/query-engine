@@ -3,4 +3,5 @@
 
 *.parquet binary
 *.png binary
+*.gif binary
 *.docx binary
