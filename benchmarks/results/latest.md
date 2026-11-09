@@ -1,6 +1,6 @@
 # Benchmark results
 
-Generated: 2026-11-08T15:23:38.773752+00:00
+Generated: 2026-11-09T06:07:45.168160+00:00
 
 Dataset: **1,000,000 sales rows**, 16 row groups, 22.5 MB.
 
@@ -12,18 +12,18 @@ CPU engine batch size: 8192; median of 3 runs after 1 warm-up run(s).
 
 | Query | CPU median (ms) | GPU median (ms) | DuckDB median (ms) | CPU / DuckDB | GPU / CPU | GPU path |
 |---|---:|---:|---:|---:|---:|---|
-| filter_aggregate | 5.04 | 5.23 | 15.98 | 0.32x | 1.04x | CUDA global aggregate |
-| global_aggregate | 56.85 | 66.36 | 28.39 | 2.00x | 1.17x | CUDA global aggregate |
-| empty_filter | 0.22 | - | 10.14 | 0.02x | - | CPU fallback (no-supported-gpu-operator) |
-| group_region | 172.14 | - | 34.95 | 4.93x | - | CPU fallback (no-supported-gpu-operator) |
-| group_customer | 555.51 | - | 81.84 | 6.79x | - | CPU fallback (no-supported-gpu-operator) |
-| topk | 93.55 | - | 42.11 | 2.22x | - | CPU fallback (no-supported-gpu-operator) |
-| join_country | 435.34 | - | 60.64 | 7.18x | - | CPU fallback (no-supported-gpu-operator) |
-| count_star | 0.01 | - | 8.40 | 0.00x | - | CPU fallback (no-supported-gpu-operator) |
+| filter_aggregate | 8.17 | 6.67 | 21.48 | 0.38x | 0.82x | CUDA global aggregate |
+| global_aggregate | 57.06 | 74.24 | 38.30 | 1.49x | 1.30x | CUDA global aggregate |
+| empty_filter | 0.19 | - | 10.10 | 0.02x | - | CPU fallback (no-supported-gpu-operator) |
+| group_region | 120.10 | - | 39.32 | 3.05x | - | CPU fallback (no-supported-gpu-operator) |
+| group_customer | 230.04 | - | 101.84 | 2.26x | - | CPU fallback (no-supported-gpu-operator) |
+| topk | 116.80 | - | 58.77 | 1.99x | - | CPU fallback (no-supported-gpu-operator) |
+| join_country | 548.12 | - | 75.47 | 7.26x | - | CPU fallback (no-supported-gpu-operator) |
+| count_star | 0.01 | - | 9.08 | 0.00x | - | CPU fallback (no-supported-gpu-operator) |
 
 CPU wins vs DuckDB: **3**; DuckDB wins: **5**; ties: **0**.
 
-GPU used for **2** queries; GPU faster than CPU: **0**, CPU faster than GPU: **2**, ties: **0**.
+GPU used for **2** queries; GPU faster than CPU: **1**, CPU faster than GPU: **1**, ties: **0**.
 
 A value below 1.00x means the first engine was faster; a value above 1.00x means the second was faster. DuckDB runs with its default thread count, while the engine is single-threaded. Full timings, per-run values, query text, versions, and dataset metadata are in the adjacent JSON file.
 
@@ -33,8 +33,8 @@ Transfer and kernel times are from the last timed run reported by the CLI; the e
 
 | Query | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |
 |---|---:|---:|---:|---:|
-| filter_aggregate | 5.23 | 0.329 | 0.106 | 1.04x |
-| global_aggregate | 66.36 | 2.682 | 0.180 | 1.17x |
+| filter_aggregate | 6.67 | 0.314 | 0.100 | 0.82x |
+| global_aggregate | 74.24 | 3.160 | 0.227 | 1.30x |
 
 ## Workload
 
@@ -46,7 +46,7 @@ One-month date range; row-group skipping plus COUNT/SUM.
 SELECT COUNT(*), SUM(amount) FROM sales WHERE sale_date >= '2025-01-01' AND sale_date < '2025-02-01'
 ```
 
-GPU: **used**, 1 reduction(s), transfer 0.329 ms, kernel 0.106 ms.
+GPU: **used**, 1 reduction(s), transfer 0.314 ms, kernel 0.100 ms.
 
 ### global_aggregate
 
@@ -56,7 +56,7 @@ Full-table global COUNT/SUM/AVG; exercises the optional CUDA aggregate path.
 SELECT COUNT(*), SUM(amount), AVG(amount) FROM sales
 ```
 
-GPU: **used**, 2 reduction(s), transfer 2.682 ms, kernel 0.180 ms.
+GPU: **used**, 2 reduction(s), transfer 3.160 ms, kernel 0.227 ms.
 
 ### empty_filter
 

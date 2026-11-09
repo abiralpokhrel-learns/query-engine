@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 <p align="center">
-  <img src="docs/assets/qe-cosmos-hero.gif" alt="qe — a columnar query engine, built from scratch. 175 tests, 1M rows, wins and losses both shown." width="100%">
+  <img src="docs/assets/qe-cosmos-hero.gif" alt="qe — a columnar query engine, built from scratch. 180 tests, 1M rows, wins and losses both shown." width="100%">
 </p>
 
 A small SQL query engine built from first principles in C++20. It reads Apache
@@ -21,7 +21,7 @@ from that stored data.
 complete, and selected version 2 features are now implemented: `DISTINCT`,
 `HAVING`, `LEFT JOIN`, `IN` / `BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a
 top-k sort for `ORDER BY ... LIMIT`, and an opt-in CUDA build for global
-aggregates. All 175 tests (166 CPU correctness tests plus 9 GPU-gated tests that
+aggregates. All 180 tests (171 CPU correctness tests plus 9 GPU-gated tests that
 skip on CPU-only builds) pass against DuckDB on generated edge-case datasets,
 the C++ parser suite passes, and the differential fuzzer matches DuckDB on
 multi-seed sweeps. Every benchmark query is verified against DuckDB on the
@@ -50,6 +50,10 @@ multi-seed sweeps. Every benchmark query is verified against DuckDB on the
 - **DuckDB-verified correctness.** End-to-end result tests, batch-size
   invariance, and a deterministic differential fuzzer compare every supported
   value against DuckDB before a feature is merged.
+- **Batch-vectorized aggregation.** Group IDs are built once per batch, then a
+  fused count/SUM/AVG and floating-point MIN/MAX pass updates typed state; compact
+  integer keys use a direct-index table and low-cardinality strings avoid per-row
+  key hashing.
 - **Performance claims with receipts.** Every benchmark query is verified before
   timing; raw runs, hardware, versions, and query text live in committed JSON,
   and the chart is regenerated from that file. Wins and losses are both reported.
@@ -284,7 +288,7 @@ the supported subset, runs each against this engine and DuckDB, and compares
 every value; a 30-query sample is part of every pytest run.
 
 ```bash
-python -m pytest tests -q                     # 175 tests; 9 GPU tests skip without a device
+python -m pytest tests -q                     # 180 tests; 9 GPU tests skip without a device
 ctest --test-dir build --output-on-failure    # parser/unit tests
 ctest --test-dir build-cuda --output-on-failure  # parser + CUDA device self-test
 python scripts/fuzz_compare.py --queries 1000 --seed 2026
@@ -328,30 +332,36 @@ before timing so CUDA module loading is not charged to the first query.
 
 | Query | qe CPU (ms) | qe GPU (ms) | DuckDB (ms) | CPU / DuckDB | GPU / CPU | GPU path |
 |---|---:|---:|---:|---:|---:|---|
-| filter_aggregate | 5.04 | 5.23 | 15.98 | 0.32x | 1.04x | CUDA |
-| global_aggregate | 56.85 | 66.36 | 28.39 | 2.00x | 1.17x | CUDA |
-| empty_filter | 0.22 | - | 10.14 | 0.02x | - | CPU fallback |
-| group_region | 172.14 | - | 34.95 | 4.93x | - | CPU fallback |
-| group_customer | 555.51 | - | 81.84 | 6.79x | - | CPU fallback |
-| topk | 93.55 | - | 42.11 | 2.22x | - | CPU fallback |
-| join_country | 435.34 | - | 60.64 | 7.18x | - | CPU fallback |
-| count_star | 0.01 | - | 8.40 | 0.00x | - | CPU fallback |
+| filter_aggregate | 8.17 | 6.67 | 21.48 | 0.38x | 0.82x | CUDA |
+| global_aggregate | 57.06 | 74.24 | 38.30 | 1.49x | 1.30x | CUDA |
+| empty_filter | 0.19 | - | 10.10 | 0.02x | - | CPU fallback |
+| group_region | 120.10 | - | 39.32 | 3.05x | - | CPU fallback |
+| group_customer | 230.04 | - | 101.84 | 2.26x | - | CPU fallback |
+| topk | 116.80 | - | 58.77 | 1.99x | - | CPU fallback |
+| join_country | 548.12 | - | 75.47 | 7.26x | - | CPU fallback |
+| count_star | 0.01 | - | 9.08 | 0.00x | - | CPU fallback |
 
 Wins and losses are both reported. The engine wins on selective scans because
 Parquet row-group statistics let it skip data and because its scan pipeline has
 little overhead; it also wins metadata-only `COUNT(*)` because it decodes no
-payload column. It loses on large hash aggregations, hash joins, and top-k
-queries: the aggregate and join loops are row-wise inside each batch, while
-DuckDB uses vectorized, multi-threaded operators. See the
-[engineering write-up](docs/engineering-writeup.md) for the analysis and for the
-optimization that cut the low-cardinality `GROUP BY` from 5.1 s to around 0.25 s.
+payload column. It now builds group IDs for a whole batch and updates aggregate
+state in one fused pass, which cut `group_customer` from 555 ms to 230 ms and
+`group_region` from 172 ms to 120 ms in the committed runs. The remaining
+losses come from single-threaded scans, the still row-wise hash join, and the
+sort/output path; DuckDB runs those operators vectorized and in parallel. See
+the [engineering write-up](docs/engineering-writeup.md) for the analysis and
+for the earlier fix that cut the low-cardinality `GROUP BY` from 5.1 s to
+around 0.25 s. Absolute times drift between benchmark sessions, including for
+queries where the sort or join dominates, so the before/after attribution comes
+from an alternating A/B run against the previous commit rather than from the two
+committed runs alone.
 
 The GPU result is deliberately not presented as a win. On `filter_aggregate`,
-the GPU kernel itself is small (0.106 ms kernel, 0.329 ms transfer), but
-workspace setup and host buffering cost slightly more than the 5.04 ms CPU
-query, so the GPU path is 1.04x slower end to end. On `global_aggregate`, moving
-the floating-point `SUM`/`AVG` work to the GPU does not offset that overhead:
-66.36 ms versus 56.85 ms on the CPU, a 1.17x GPU/CPU ratio. The GPU path is also
+the GPU kernel itself is small (0.100 ms kernel, 0.314 ms transfer); the 6.67 ms
+end-to-end result versus 8.17 ms on the CPU is within local run-to-run noise, so
+it is not claimed as a speedup. On `global_aggregate`, moving the floating-point
+`SUM`/`AVG` work to the GPU does not offset the host buffering and transfer:
+74.24 ms versus 57.06 ms on the CPU, a 1.30x GPU/CPU ratio. The GPU path is also
 slower than DuckDB's vectorized, multi-threaded aggregate. Repeated local runs
 of the full-table sum straddle 1.0x, so the honest conclusion is that the
 current path is roughly tied at best; the scan and host buffering dominate.
@@ -434,8 +444,10 @@ creates them on first run with `scripts/generate_data.py`.
 - No `DISTINCT` inside aggregates; aggregate arguments must be plain columns;
   `GROUP BY` accepts plain columns only.
 - Sort and aggregation are in-memory and assume current data sizes; no spilling.
-- Aggregation and join probing still contain row-wise inner loops; they are not
-  yet vectorized or parallel.
+- Aggregation is batch-vectorized: group IDs are built for a whole batch, then
+  count/SUM/AVG and floating-point MIN/MAX update typed state in one fused pass.
+  Join probing still contains a row-wise inner loop, and neither operator is
+  parallel yet.
 - GPU acceleration is optional and narrow: a CUDA build can run no-`GROUP BY`
   queries that combine `COUNT` with floating-point `SUM`/`AVG`; the GPU computes
   only the floating-point reductions, while `COUNT`, filtering, and the Parquet
@@ -444,8 +456,8 @@ creates them on first run with `scripts/generate_data.py`.
   and publishes measured, verified GPU results alongside the CPU results.
 
 Remaining version 2 work is listed in the
-[write-up](docs/engineering-writeup.md#8-limits-and-version-2-ideas): vectorized hash
-aggregation and join probing, multi-threading, broader CUDA coverage
+[write-up](docs/engineering-writeup.md#8-limits-and-version-2-ideas): vectorized join
+probing, multi-threading, broader CUDA coverage
 (grouped aggregates, filters, joins) on the verified RTX 3050, the remaining join
 types and SQL clauses, join-key type coercion, spilling, and nested-type
 support. These are listed rather than half-implemented.

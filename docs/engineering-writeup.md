@@ -18,7 +18,7 @@ results are documented in Section 7.
 
 At the time of writing:
 
-- 175 tests pass against DuckDB on a CUDA build (166 CPU tests plus 9 GPU-gated
+- 180 tests pass against DuckDB on a CUDA build (171 CPU tests plus 9 GPU-gated
   tests); the GPU tests skip on CPU-only builds.
 - The C++ parser/unit suite passes, and the CUDA build adds a real reduction
   self-test.
@@ -225,14 +225,22 @@ DuckDB; the GPU runs are in Section 7.3.
 
 | Query | qe CPU (ms) | DuckDB (ms) | Ratio | Winner |
 |---|---:|---:|---:|---|
-| filter_aggregate | 5.04 | 15.98 | 0.32x | qe |
-| global_aggregate | 56.85 | 28.39 | 2.00x | DuckDB |
-| empty_filter | 0.22 | 10.14 | 0.02x | qe |
-| group_region | 172.14 | 34.95 | 4.93x | DuckDB |
-| group_customer | 555.51 | 81.84 | 6.79x | DuckDB |
-| topk | 93.55 | 42.11 | 2.22x | DuckDB |
-| join_country | 435.34 | 60.64 | 7.18x | DuckDB |
-| count_star | 0.01 | 8.40 | 0.00x | qe |
+| filter_aggregate | 8.17 | 21.48 | 0.38x | qe |
+| global_aggregate | 57.06 | 38.30 | 1.49x | DuckDB |
+| empty_filter | 0.19 | 10.10 | 0.02x | qe |
+| group_region | 120.10 | 39.32 | 3.05x | DuckDB |
+| group_customer | 230.04 | 101.84 | 2.26x | DuckDB |
+| topk | 116.80 | 58.77 | 1.99x | DuckDB |
+| join_country | 548.12 | 75.47 | 7.26x | DuckDB |
+| count_star | 0.01 | 9.08 | 0.00x | qe |
+
+These numbers are medians from the committed `latest.json` run. The engine is
+single-threaded while DuckDB uses 16 threads. Absolute times drift between
+sessions: most untouched scan-bound queries and DuckDB itself moved by roughly
+20-40% between the previous commit and this run, and the sub-10 ms filter query
+moved further. Cross-session timings are therefore reported as context, not
+used alone to attribute the aggregation change; the alternating A/B runs in
+Section 6.2 are the attribution measurement.
 
 ### Why the engine wins three queries
 
@@ -250,20 +258,22 @@ real, not because it generalizes.
 
 ### Why the engine loses five queries
 
-- **`global_aggregate`**: the full-table `SUM`/`AVG` still runs through the
-  row-wise aggregate loop on the CPU. DuckDB's vectorized, multi-threaded
-  aggregate is about 2x faster. The optional GPU path is compared in Section
-  7.3; it narrows the gap but does not beat DuckDB or reliably beat the CPU.
-- **`group_region` / `group_customer`**: the aggregate consumes a batch row by
-  row, hashing a serialized key for each row. DuckDB uses vectorized,
-  multi-threaded hash aggregation. The engine is roughly 4.9-6.8x slower even
-  after the optimization described below.
-- **`join_country`**: the hash join builds and probes row by row, then feeds a
-  row-wise aggregate. DuckDB's join and aggregate pipelines are vectorized and
-  parallel; the gap is about 7.2x.
+- **`global_aggregate`**: the CPU query now uses the fused batch accumulation
+  described in Section 6.2, but it still scans and aggregates on one thread.
+  DuckDB's vectorized, multi-threaded aggregate is about 1.5x faster. The
+  optional GPU path is compared in Section 7.3; it does not beat DuckDB or
+  reliably beat the CPU.
+- **`group_region` / `group_customer`**: group IDs are built for the whole
+  batch and the aggregates are updated in a fused pass, but the scan and
+  grouping remain single-threaded and the result is materialized and sorted on
+  one thread. DuckDB uses vectorized, multi-threaded hash aggregation. The
+  engine is roughly 2.3-3.1x slower in the committed run.
+- **`join_country`**: the hash join still builds and probes row by row. The
+  aggregate after it is batch-vectorized, but the join dominates; DuckDB's join
+  pipeline is vectorized and parallel, so the gap is about 7.3x.
 - **`topk`**: the engine now partitions to the top K before sorting, but it still
   scans and filters every batch with one thread and hashes no work away. DuckDB
-  combines a parallel scan with its own top-k path; the gap is about 2.2x.
+  combines a parallel scan with its own top-k path; the gap is about 2.0x.
 
 The honest conclusion is the one in the brief: a student-built engine should
 not be expected to beat a mature vectorized engine overall. The value is in the
@@ -311,9 +321,8 @@ MIN/MAX change removed the real bottleneck. This is exactly why the benchmark
 harness exists: the bug was invisible in correctness tests and only appeared
 when a low-cardinality query was timed next to a high-cardinality one.
 
-The remaining row-wise loops are a known limitation. Replacing them with
-vectorized hash aggregation and a vectorized join probe is the largest
-performance item on the version 2 list.
+The aggregate hot path was later replaced by the batch-vectorized design in
+Section 6.2. The largest remaining row-wise loop is the hash join probe.
 
 ### 6.1 Two version 2 optimizations
 
@@ -332,6 +341,53 @@ Two smaller fixes removed work that the benchmark made visible:
 
 Neither optimization changes SQL semantics, and both are covered by the same
 DuckDB comparison tests as the unoptimized paths.
+
+### 6.2 Batch-vectorized hash aggregation
+
+The old aggregate called `UpdateGroup` once per input row. For every row it
+serialized the grouping key, looked it up, and then looped over every aggregate,
+converting each argument with a per-row type switch. MIN/MAX retained an Arrow
+scalar and could allocate a new one whenever the extreme changed. That design
+was simple and correct, but it paid key-construction, dispatch, and allocation
+costs one million times per million-row query.
+
+The current implementation separates grouping into two batch-level phases:
+
+1. **Build group IDs for the whole batch.** Integer keys use an open-addressed
+   flat table, or a direct-index table when the observed key span is at most
+   4,194,304 values (16 MiB of `int32` slots). Compact keys therefore need one
+   array lookup per row instead of a hash probe. If a later batch widens the
+   range too far, the operator rebuilds the flat table and continues, so
+   correctness does not depend on the first batch being representative.
+   Single-string keys with at most 32 groups stay in a small linear list that
+   avoids constructing and hashing a key string; the list migrates to the
+   generic hash map when cardinality grows. Multiple keys continue to use the
+   serialized-key map.
+2. **Accumulate in one fused pass.** Argument values and validity bitmaps are
+   resolved once per batch. A single row loop then updates all aggregates for
+   that row's group in adjacent typed state. COUNT/SUM/AVG and floating-point
+   MIN/MAX are fused; integer, boolean, date, and string MIN/MAX use the typed
+   fallback pass. Group state is allocated in blocks rather than one small
+   vector per group, and string extrema are allocated only for string MIN/MAX.
+
+The GPU global-aggregate path is unchanged: grouping remains CPU-only and the
+CUDA path still handles only no-`GROUP BY` floating-point reductions.
+
+The committed benchmark improved `group_customer` from 555.51 ms to 230.04 ms
+(2.41x) and `group_region` from 172.14 ms to 120.10 ms (1.43x). Those two runs
+are from different sessions and include the absolute-time drift described
+above, so the causal comparison is a separate alternating A/B run against the
+previous commit: five rounds of minimum `execute_ms` on the same machine
+measured 490 -> 203 ms for `group_customer` (2.42x), 200 -> 117 ms for
+`group_region` (1.71x), 68 -> 53 ms for `global_aggregate` (1.27x), and
+essentially no change for `topk` or `join_country`, where the join dominates.
+The engine is still single-threaded, so this narrows the DuckDB gap rather
+than closing it.
+
+Tests cover dense-key expansion across batches in both directions, fallback when
+a key span is too wide for the direct table, NULL group keys, low- and
+high-cardinality string groups, typed integer, boolean, date, and string
+MIN/MAX, and result invariance at batch sizes 1, 7, 128, and 8,192.
 
 ## 7. GPU status and design
 
@@ -390,20 +446,19 @@ kernel columns are the separately measured CUDA components.
 
 | Query | CPU (ms) | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |
 |---|---:|---:|---:|---:|---:|
-| `filter_aggregate` | 5.04 | 5.23 | 0.329 | 0.106 | 1.04x |
-| `global_aggregate` | 56.85 | 66.36 | 2.682 | 0.180 | 1.17x |
+| `filter_aggregate` | 8.17 | 6.67 | 0.314 | 0.100 | 0.82x |
+| `global_aggregate` | 57.06 | 74.24 | 3.160 | 0.227 | 1.30x |
 
 The result is reported without a speedup claim. On `filter_aggregate`, the
-kernel and transfer are tiny, but workspace setup and host buffering cost
-slightly more than the 5.04 ms CPU query, so the GPU path is essentially tied
-and 1.04x slower end to end. On `global_aggregate`, moving `SUM` and `AVG` over
-one million rows to the GPU does not offset the host-side buffering: 66.36 ms
-versus 56.85 ms on the CPU, a 1.17x GPU/CPU ratio. Repeated local runs of the
-full-table sum straddle 1.0x, so the honest conclusion is roughly tied at best.
-DuckDB remains faster on both queries because it vectorizes and multi-threads the
-scan and aggregation; at this data size the Parquet scan and row-wise host work
-dominate. The GPU is not claimed to accelerate queries that spend most of their
-time decoding Parquet.
+kernel and transfer are tiny; the 6.67 ms end-to-end result versus 8.17 ms on
+the CPU is within local run-to-run noise and is not claimed as a speedup. On
+`global_aggregate`, moving `SUM` and `AVG` over one million rows to the GPU does
+not offset the host-side buffering: 74.24 ms versus 57.06 ms on the CPU, a
+1.30x GPU/CPU ratio. Repeated local runs of the full-table sum straddle 1.0x,
+so the honest conclusion is roughly tied at best. DuckDB remains faster on both
+queries because it vectorizes and multi-threads the scan and aggregation; at
+this data size the Parquet scan and host-side work dominate. The GPU is not
+claimed to accelerate queries that spend most of their time decoding Parquet.
 
 ### 7.4 Remaining GPU work
 
@@ -435,15 +490,15 @@ Known 0.2.0 limits:
 - no `DISTINCT` inside aggregates, no aggregate arguments that are expressions,
   and no `GROUP BY` expressions;
 - in-memory sort and aggregation, with no spilling;
-- row-wise inner loops for aggregation and join probing;
+- scalar accumulation loops within vectorized aggregation batches, and row-wise
+  join probing;
 - the CUDA path is optional and limited to global floating-point `SUM`/`AVG`
   plus host-side `COUNT`; grouped aggregates, filters, joins, and integer sums
   remain CPU-only.
 
 Version 2 work still open, in priority order:
 
-1. Vectorized hash aggregation (batch-level key encoding and columnar state
-   updates) and a vectorized join probe.
+1. A vectorized join probe.
 2. Multi-threaded scans and operators.
 3. CUDA grouped aggregation, filter kernels, and joins, with separate
    transfer/kernel timers and CPU fallback; the global floating-point path is
