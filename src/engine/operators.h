@@ -2,8 +2,10 @@
 
 #include <arrow/api.h>
 
+#include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -179,16 +181,33 @@ public:
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> Next() override;
 
 private:
+  enum class ExtremeKind : uint8_t { kNone, kInt64, kDouble, kBool, kString };
+
   struct AggState {
     int64_t count = 0;
     __extension__ __int128 int_sum = 0;
     double double_sum = 0;
     bool has_value = false;
-    std::shared_ptr<arrow::Scalar> extreme;
+    // MIN/MAX keep the winning value in its native representation. The old
+    // path allocated an Arrow scalar for every row that became the new
+    // extreme; this keeps the accumulation loop allocation-free.
+    ExtremeKind extreme_kind = ExtremeKind::kNone;
+    int64_t int_extreme = 0;
+    double double_extreme = 0;
+    bool bool_extreme = false;
+    // Allocated only for string MIN/MAX. Keeping a std::string inline would
+    // make every count/SUM/AVG state much larger and slow the grouped loop.
+    std::unique_ptr<std::string> string_extreme;
   };
   struct Group {
     std::vector<std::shared_ptr<arrow::Scalar>> keys;
-    std::vector<AggState> states;
+  };
+
+  struct StringHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view value) const noexcept {
+      return std::hash<std::string_view>{}(value);
+    }
   };
 
   // Open-addressed index for a single integer GROUP BY key. The generic
@@ -202,15 +221,27 @@ private:
   };
 
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> BuildResult();
+  void AddGroup(Group group);
+  AggState& State(size_t aggregate, size_t group) {
+    return states_[group * aggregates_.size() + aggregate];
+  }
+  const AggState& State(size_t aggregate, size_t group) const {
+    return states_[group * aggregates_.size() + aggregate];
+  }
   arrow::Status Consume(const std::shared_ptr<arrow::RecordBatch>& batch);
   arrow::Status ConsumeGpu(const std::shared_ptr<arrow::RecordBatch>& batch,
                            const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays);
   arrow::Status FlushGpuBuffer(size_t index);
   arrow::Status FinishGpu();
-  arrow::Status UpdateGroup(Group& group, int64_t row,
-                            const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays);
+  arrow::Status BuildGroupIds(int64_t num_rows,
+                              const std::vector<std::shared_ptr<arrow::Array>>& group_arrays,
+                              std::vector<size_t>& group_ids);
+  arrow::Status AccumulateBatch(const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays,
+                                const std::vector<size_t>& group_ids);
   size_t FlatFindOrInsert(uint64_t key, bool is_null, bool* inserted);
   void FlatGrow();
+  bool ExpandDenseKey(int64_t key);
+  void DisableDense();
 
   struct GpuBuffer {
     std::vector<double> values;
@@ -228,10 +259,35 @@ private:
   std::unique_ptr<gpu::Workspace> gpu_workspace_;
   std::vector<GpuBuffer> gpu_buffers_;
   std::vector<Group> groups_;
-  std::unordered_map<std::string, size_t> group_index_;
+  // States for all aggregates of a group are adjacent, so the fused
+  // count/SUM/AVG loop touches one group entry per row instead of one cache
+  // line per aggregate pass.
+  std::vector<AggState> states_;
+  std::unordered_map<std::string, size_t, StringHash, std::equal_to<>> group_index_;
   std::vector<FlatSlot> flat_slots_;
+  // For a single integer key with a compact range, a direct array is faster
+  // than hashing on every row. It is only enabled when the first batch shows
+  // a small enough span, and falls back to the open-addressed table if a later
+  // batch widens the range too much.
+  std::vector<int32_t> dense_group_ids_;
+  int64_t dense_min_key_ = 0;
+  int64_t dense_max_key_ = 0;
+  int32_t dense_null_group_ = -1;
+  bool dense_active_ = false;
+  // Low-cardinality single-string grouping stays in a small linear list and
+  // avoids constructing a key string and hashing it for every row. It migrates
+  // to the generic hash map once the cardinality grows.
+  struct SmallStringGroup {
+    std::string key;
+    size_t group = 0;
+  };
+  std::vector<SmallStringGroup> small_string_groups_;
+  int32_t small_null_group_ = -1;
+  bool string_map_active_ = false;
+  std::vector<size_t> batch_group_ids_;
   size_t flat_size_ = 0;
-  int group_key_mode_ = 0; // 0 undecided, 1 integer fast path, -1 generic
+  // 0 undecided, 1 compact integer, 2 single string, -1 generic serialized map
+  int group_key_mode_ = 0;
   std::shared_ptr<arrow::RecordBatch> result_;
   bool done_ = false;
 };

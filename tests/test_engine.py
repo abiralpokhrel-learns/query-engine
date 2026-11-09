@@ -230,7 +230,7 @@ CORRECTNESS_QUERIES = [
     "FROM edge_cases WHERE id = 4",
     "SELECT COUNT(*), COUNT(value), SUM(value), AVG(value), MIN(value), MAX(value) "
     "FROM empty_table",
-    "SELECT MIN(label), MAX(label), MIN(day), MAX(day) FROM edge_cases",
+    "SELECT MIN(label), MAX(label), MIN(day), MAX(day), MIN(flag), MAX(flag) FROM edge_cases",
     "SELECT region, COUNT(*), SUM(quantity), AVG(quantity), MIN(unit_price), MAX(amount) "
     "FROM sales GROUP BY region ORDER BY region",
     "SELECT region, COUNT(*) FROM sales WHERE status = 'completed' GROUP BY region ORDER BY region",
@@ -259,6 +259,16 @@ CORRECTNESS_QUERIES = [
     "SELECT 1 FROM empty_table HAVING COUNT(*) > 0",
     "SELECT region, COUNT(*) FROM sales GROUP BY region ORDER BY COUNT(*) DESC, region",
     "SELECT region FROM sales GROUP BY region ORDER BY COUNT(*) DESC, region LIMIT 2",
+    # Grouping fast paths: dense integer keys (including NULLs), a key span
+    # that is too wide for the dense table, low- and high-cardinality strings,
+    # and string MIN/MAX.
+    "SELECT quantity, COUNT(*), SUM(amount), MIN(amount), MAX(amount) "
+    "FROM edge_cases GROUP BY quantity ORDER BY quantity",
+    "SELECT category, MIN(label), MAX(label), COUNT(*) "
+    "FROM edge_cases GROUP BY category ORDER BY category",
+    "SELECT c.name, COUNT(*), SUM(s.amount) FROM sales s "
+    "JOIN customers c ON s.customer_id = c.customer_id "
+    "GROUP BY c.name ORDER BY c.name",
     # ORDER BY / null ordering.
     "SELECT id, amount FROM edge_cases ORDER BY amount ASC",
     "SELECT id, amount FROM edge_cases ORDER BY amount DESC",
@@ -432,6 +442,58 @@ def test_batch_sizes_do_not_change_results(data_dir: Path, conn) -> None:
         for actual_row, expected_row in zip(actual, expected):
             for a, e in zip(actual_row, expected_row):
                 assert same_value(a, e), (batch_size, actual_row, expected_row)
+
+
+def test_dense_integer_groups_expand_across_batches(data_dir: Path, conn) -> None:
+    path = data_dir / "dense_negative.parquet"
+    # Keys start positive, then jump up and later below zero. The dense table
+    # must grow in both directions without losing groups or changing results.
+    conn.execute(
+        f"COPY (SELECT CASE WHEN i < 8 THEN i + 10 "
+        f"WHEN i < 16 THEN i + 1000 ELSE -100000 - i END AS k, "
+        f"CAST(i AS DOUBLE) AS v FROM range(64) t(i) ORDER BY i) "
+        f"TO '{path.as_posix()}' (FORMAT PARQUET)"
+    )
+    conn.execute(f"CREATE VIEW dense_negative AS SELECT * FROM read_parquet('{path.as_posix()}')")
+
+    cases = [
+        ("SELECT sale_id, COUNT(*) FROM sales GROUP BY sale_id ORDER BY sale_id", TABLE_NAMES),
+        (
+            "SELECT k, COUNT(*), SUM(v) FROM dense_negative GROUP BY k ORDER BY k",
+            ["dense_negative"],
+        ),
+    ]
+    for query, tables in cases:
+        expected = [normalize(row) for row in conn.execute(query).fetchall()]
+        for batch_size in ("1", "7", "128", "8192"):
+            run = run_qe(data_dir, query, "--batch-size", batch_size, "--no-stats", tables=tables)
+            assert run.returncode == 0, f"batch {batch_size}: {run.stderr}"
+            actual = run.rows
+            assert len(actual) == len(expected), (batch_size, len(actual), len(expected))
+            for actual_row, expected_row in zip(actual, expected):
+                for a, e in zip(actual_row, expected_row):
+                    assert same_value(a, e), (batch_size, actual_row, expected_row)
+
+
+def test_wide_integer_keys_fall_back_to_flat_grouping(data_dir: Path, conn) -> None:
+    path = data_dir / "wide_keys.parquet"
+    # The first batch has a compact key range, then the stream jumps to keys
+    # that cannot fit in the dense table. The operator must migrate to the
+    # flat hash table without losing groups created by the dense phase.
+    conn.execute(
+        f"COPY (SELECT CASE WHEN i < 32 THEN i + 1 ELSE 10000000 + i END AS k, "
+        f"CAST(i AS DOUBLE) AS v FROM range(64) t(i) ORDER BY i) "
+        f"TO '{path.as_posix()}' (FORMAT PARQUET)"
+    )
+    conn.execute(f"CREATE VIEW wide_keys AS SELECT * FROM read_parquet('{path.as_posix()}')")
+    query = "SELECT k, COUNT(*), SUM(v) FROM wide_keys GROUP BY k ORDER BY k"
+    run = run_qe(data_dir, query, "--batch-size", "8", "--no-stats", tables=["wide_keys"])
+    assert run.returncode == 0, run.stderr
+    expected = [normalize(row) for row in conn.execute(query).fetchall()]
+    assert len(run.rows) == len(expected)
+    for actual_row, expected_row in zip(run.rows, expected):
+        for a, e in zip(actual_row, expected_row):
+            assert same_value(a, e), (actual_row, expected_row)
 
 
 def test_json_shape_and_table_output(data_dir: Path) -> None:

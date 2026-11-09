@@ -34,6 +34,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Aggregation now builds group IDs for a whole batch before accumulating, uses a
+  direct-index table for compact integer keys and a low-cardinality string fast
+  path, and fuses COUNT/SUM/AVG and floating-point MIN/MAX into one typed pass.
+  The committed `group_customer` benchmark dropped from 555.51 ms to 230.04 ms;
+  an alternating A/B run measured 2.42x on that query and 1.71x on
+  `group_region`.
 - CI now uses the current `actions/checkout` and `setup-micromamba` releases.
 
 ## [0.2.0] - 2026-11-06

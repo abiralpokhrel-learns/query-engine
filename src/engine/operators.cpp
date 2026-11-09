@@ -4,6 +4,7 @@
 #include <arrow/array/util.h>
 #include <arrow/compute/api.h>
 #include <arrow/table.h>
+#include <arrow/util/bit_util.h>
 #include <arrow/util/checked_cast.h>
 
 #include <algorithm>
@@ -27,6 +28,11 @@ using arrow::internal::checked_cast;
 // performs one host-to-device copy, one reduction kernel, and one result copy,
 // so per-batch synchronization does not dominate small scans.
 constexpr size_t kGpuBufferValues = 1U << 20;
+
+// Upper bound on the direct-index grouping table. At 4 bytes per slot this is
+// 16 MiB, and it is only allocated when the observed key span is small.
+constexpr uint64_t kMaxDenseRange = 1U << 22;
+constexpr size_t kSmallStringGroups = 32;
 
 std::shared_ptr<arrow::RecordBatch>
 MakeEmptyBatchImpl(const std::shared_ptr<arrow::Schema>& schema) {
@@ -253,110 +259,6 @@ bool IsSortableType(const arrow::DataType& type) {
   }
 }
 
-arrow::Result<int64_t> ScalarAsInt64(const std::shared_ptr<arrow::Scalar>& scalar) {
-  switch (scalar->type->id()) {
-  case arrow::Type::INT8:
-    return checked_cast<const arrow::Int8Scalar&>(*scalar).value;
-  case arrow::Type::INT16:
-    return checked_cast<const arrow::Int16Scalar&>(*scalar).value;
-  case arrow::Type::INT32:
-    return checked_cast<const arrow::Int32Scalar&>(*scalar).value;
-  case arrow::Type::INT64:
-    return checked_cast<const arrow::Int64Scalar&>(*scalar).value;
-  case arrow::Type::UINT8:
-    return checked_cast<const arrow::UInt8Scalar&>(*scalar).value;
-  case arrow::Type::UINT16:
-    return checked_cast<const arrow::UInt16Scalar&>(*scalar).value;
-  case arrow::Type::UINT32:
-    return checked_cast<const arrow::UInt32Scalar&>(*scalar).value;
-  case arrow::Type::UINT64:
-    return static_cast<int64_t>(checked_cast<const arrow::UInt64Scalar&>(*scalar).value);
-  default:
-    return arrow::Status::Invalid("aggregate requires an integer column");
-  }
-}
-
-arrow::Result<double> ScalarAsDouble(const std::shared_ptr<arrow::Scalar>& scalar) {
-  switch (scalar->type->id()) {
-  case arrow::Type::INT8:
-  case arrow::Type::INT16:
-  case arrow::Type::INT32:
-  case arrow::Type::INT64:
-  case arrow::Type::UINT8:
-  case arrow::Type::UINT16:
-  case arrow::Type::UINT32:
-  case arrow::Type::UINT64: {
-    ARROW_ASSIGN_OR_RAISE(auto value, ScalarAsInt64(scalar));
-    return static_cast<double>(value);
-  }
-  case arrow::Type::FLOAT:
-    return checked_cast<const arrow::FloatScalar&>(*scalar).value;
-  case arrow::Type::DOUBLE:
-    return checked_cast<const arrow::DoubleScalar&>(*scalar).value;
-  default:
-    return arrow::Status::Invalid("aggregate requires a numeric column");
-  }
-}
-
-arrow::Result<int64_t> ArrayAsInt64(const arrow::Array& array, int64_t row) {
-  switch (array.type_id()) {
-  case arrow::Type::INT8:
-    return checked_cast<const arrow::Int8Array&>(array).Value(row);
-  case arrow::Type::INT16:
-    return checked_cast<const arrow::Int16Array&>(array).Value(row);
-  case arrow::Type::INT32:
-    return checked_cast<const arrow::Int32Array&>(array).Value(row);
-  case arrow::Type::INT64:
-    return checked_cast<const arrow::Int64Array&>(array).Value(row);
-  case arrow::Type::UINT8:
-    return checked_cast<const arrow::UInt8Array&>(array).Value(row);
-  case arrow::Type::UINT16:
-    return checked_cast<const arrow::UInt16Array&>(array).Value(row);
-  case arrow::Type::UINT32:
-    return checked_cast<const arrow::UInt32Array&>(array).Value(row);
-  case arrow::Type::UINT64:
-    return static_cast<int64_t>(checked_cast<const arrow::UInt64Array&>(array).Value(row));
-  default:
-    return arrow::Status::Invalid("aggregate requires an integer column");
-  }
-}
-
-arrow::Result<double> ArrayAsDouble(const arrow::Array& array, int64_t row) {
-  switch (array.type_id()) {
-  case arrow::Type::FLOAT:
-    return checked_cast<const arrow::FloatArray&>(array).Value(row);
-  case arrow::Type::DOUBLE:
-    return checked_cast<const arrow::DoubleArray&>(array).Value(row);
-  case arrow::Type::INT8:
-  case arrow::Type::INT16:
-  case arrow::Type::INT32:
-  case arrow::Type::INT64:
-  case arrow::Type::UINT8:
-  case arrow::Type::UINT16:
-  case arrow::Type::UINT32:
-  case arrow::Type::UINT64: {
-    ARROW_ASSIGN_OR_RAISE(auto value, ArrayAsInt64(array, row));
-    return static_cast<double>(value);
-  }
-  default:
-    return arrow::Status::Invalid("aggregate requires a numeric column");
-  }
-}
-
-std::string_view ScalarStringView(const arrow::Scalar& scalar) {
-  const auto id = scalar.type->id();
-  if (id == arrow::Type::STRING) {
-    const auto& buffer = checked_cast<const arrow::StringScalar&>(scalar).value;
-    return std::string_view(reinterpret_cast<const char*>(buffer->data()), buffer->size());
-  }
-  if (id == arrow::Type::LARGE_STRING) {
-    const auto& buffer = checked_cast<const arrow::LargeStringScalar&>(scalar).value;
-    return std::string_view(reinterpret_cast<const char*>(buffer->data()), buffer->size());
-  }
-  const auto& buffer = checked_cast<const arrow::BinaryScalar&>(scalar).value;
-  return std::string_view(reinterpret_cast<const char*>(buffer->data()), buffer->size());
-}
-
 std::string_view ArrayStringView(const arrow::Array& array, int64_t row) {
   const auto id = array.type_id();
   if (id == arrow::Type::STRING) {
@@ -366,41 +268,6 @@ std::string_view ArrayStringView(const arrow::Array& array, int64_t row) {
     return checked_cast<const arrow::LargeStringArray&>(array).GetView(row);
   }
   return checked_cast<const arrow::BinaryArray&>(array).GetView(row);
-}
-
-// Compares one array value with a scalar without materializing an Arrow scalar
-// per row. Used by MIN/MAX so the inner loop stays allocation-free.
-arrow::Result<int> CompareArrayToScalar(const arrow::Array& array, int64_t row,
-                                        const arrow::Scalar& scalar) {
-  const auto type_id = array.type_id();
-  if (arrow::is_integer(type_id)) {
-    ARROW_ASSIGN_OR_RAISE(auto left, ArrayAsInt64(array, row));
-    ARROW_ASSIGN_OR_RAISE(auto right, ScalarAsInt64(scalar.GetSharedPtr()));
-    return left < right ? -1 : (left > right ? 1 : 0);
-  }
-  if (type_id == arrow::Type::FLOAT || type_id == arrow::Type::DOUBLE) {
-    ARROW_ASSIGN_OR_RAISE(auto left, ArrayAsDouble(array, row));
-    ARROW_ASSIGN_OR_RAISE(auto right, ScalarAsDouble(scalar.GetSharedPtr()));
-    return left < right ? -1 : (left > right ? 1 : 0);
-  }
-  if (type_id == arrow::Type::DATE32) {
-    const auto left = checked_cast<const arrow::Date32Array&>(array).Value(row);
-    const auto right = checked_cast<const arrow::Date32Scalar&>(scalar).value;
-    return left < right ? -1 : (left > right ? 1 : 0);
-  }
-  if (type_id == arrow::Type::BOOL) {
-    const auto left = checked_cast<const arrow::BooleanArray&>(array).Value(row);
-    const auto right = checked_cast<const arrow::BooleanScalar&>(scalar).value;
-    return left == right ? 0 : (left ? 1 : -1);
-  }
-  if (type_id == arrow::Type::STRING || type_id == arrow::Type::LARGE_STRING ||
-      type_id == arrow::Type::BINARY) {
-    const auto left = ArrayStringView(array, row);
-    const auto right = ScalarStringView(scalar);
-    const int cmp = left.compare(right);
-    return cmp < 0 ? -1 : (cmp > 0 ? 1 : 0);
-  }
-  return arrow::Status::Invalid("MIN/MAX does not support type " + array.type()->ToString());
 }
 
 bool IsIntegerKeyType(const arrow::DataType& type) {
@@ -418,6 +285,11 @@ bool IsIntegerKeyType(const arrow::DataType& type) {
   default:
     return false;
   }
+}
+
+bool IsStringKeyType(const arrow::DataType& type) {
+  return type.id() == arrow::Type::STRING || type.id() == arrow::Type::LARGE_STRING ||
+         type.id() == arrow::Type::BINARY;
 }
 
 uint64_t IntegerKeyAt(const arrow::Array& array, int64_t row) {
@@ -446,6 +318,46 @@ uint64_t IntegerKeyAt(const arrow::Array& array, int64_t row) {
         static_cast<int64_t>(checked_cast<const arrow::Date32Array&>(array).Value(row)));
   default:
     return 0;
+  }
+}
+
+// Extracts a signed key for the dense grouping path. Unsigned values that do
+// not fit in int64_t make the caller fall back to the general flat table.
+bool SignedIntegerKeyAt(const arrow::Array& array, int64_t row, int64_t* value) {
+  switch (array.type_id()) {
+  case arrow::Type::INT8:
+    *value = checked_cast<const arrow::Int8Array&>(array).Value(row);
+    return true;
+  case arrow::Type::INT16:
+    *value = checked_cast<const arrow::Int16Array&>(array).Value(row);
+    return true;
+  case arrow::Type::INT32:
+    *value = checked_cast<const arrow::Int32Array&>(array).Value(row);
+    return true;
+  case arrow::Type::INT64:
+    *value = checked_cast<const arrow::Int64Array&>(array).Value(row);
+    return true;
+  case arrow::Type::UINT8:
+    *value = checked_cast<const arrow::UInt8Array&>(array).Value(row);
+    return true;
+  case arrow::Type::UINT16:
+    *value = checked_cast<const arrow::UInt16Array&>(array).Value(row);
+    return true;
+  case arrow::Type::UINT32:
+    *value = checked_cast<const arrow::UInt32Array&>(array).Value(row);
+    return true;
+  case arrow::Type::UINT64: {
+    const uint64_t value64 = checked_cast<const arrow::UInt64Array&>(array).Value(row);
+    if (value64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+      return false;
+    *value = static_cast<int64_t>(value64);
+    return true;
+  }
+  case arrow::Type::DATE32:
+    *value = checked_cast<const arrow::Date32Array&>(array).Value(row);
+    return true;
+  default:
+    return false;
   }
 }
 
@@ -751,48 +663,675 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> SortOperator::Next() {
 // Aggregate
 // ---------------------------------------------------------------------------
 
-arrow::Status
-AggregateOperator::UpdateGroup(Group& group, int64_t row,
-                               const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays) {
-  for (size_t i = 0; i < aggregates_.size(); ++i) {
-    const auto& aggregate = *aggregates_[i];
-    AggState& state = group.states[i];
-    if (aggregate.star) {
-      ++state.count;
-      continue;
-    }
-    const auto& arguments = *argument_arrays[i];
-    if (arguments.IsNull(row))
-      continue;
+void AggregateOperator::AddGroup(Group group) {
+  groups_.push_back(std::move(group));
+  const size_t needed = groups_.size() * aggregates_.size();
+  if (needed > states_.size()) {
+    // Grow in blocks so high-cardinality grouping does not call resize once
+    // per group. The extra initialized states are harmless.
+    const size_t grown_groups = std::max<size_t>(256, groups_.size() * 2);
+    states_.resize(grown_groups * aggregates_.size());
+  }
+}
 
-    if (aggregate.function == "count") {
-      ++state.count;
-    } else if (aggregate.function == "sum") {
-      if (output_schema_->field(group_by_.size() + i)->type()->id() == arrow::Type::DOUBLE) {
-        ARROW_ASSIGN_OR_RAISE(auto value, ArrayAsDouble(arguments, row));
-        state.double_sum += value;
-      } else {
-        ARROW_ASSIGN_OR_RAISE(auto value, ArrayAsInt64(arguments, row));
-        state.int_sum += value;
+bool AggregateOperator::ExpandDenseKey(int64_t key) {
+  if (key >= dense_min_key_ && key <= dense_max_key_)
+    return true;
+  const uint64_t span =
+      static_cast<uint64_t>(dense_max_key_) - static_cast<uint64_t>(dense_min_key_) + 1;
+  if (key < dense_min_key_) {
+    const uint64_t delta = static_cast<uint64_t>(dense_min_key_) - static_cast<uint64_t>(key);
+    if (delta > kMaxDenseRange - span)
+      return false;
+    dense_group_ids_.insert(dense_group_ids_.begin(), static_cast<size_t>(delta), int32_t{-1});
+    dense_min_key_ = key;
+  } else {
+    const uint64_t delta = static_cast<uint64_t>(key) - static_cast<uint64_t>(dense_max_key_);
+    if (delta > kMaxDenseRange - span)
+      return false;
+    dense_group_ids_.resize(dense_group_ids_.size() + static_cast<size_t>(delta), int32_t{-1});
+    dense_max_key_ = key;
+  }
+  return true;
+}
+
+void AggregateOperator::DisableDense() {
+  if (!dense_active_)
+    return;
+
+  size_t capacity = 16;
+  while (capacity < (groups_.size() + 1) * 2)
+    capacity <<= 1;
+  flat_slots_.assign(capacity, FlatSlot{});
+  flat_size_ = 0;
+  for (size_t i = 0; i < dense_group_ids_.size(); ++i) {
+    const int32_t group = dense_group_ids_[i];
+    if (group < 0)
+      continue;
+    bool inserted = false;
+    const uint64_t key = static_cast<uint64_t>(dense_min_key_) + i;
+    const size_t slot = FlatFindOrInsert(key, false, &inserted);
+    flat_slots_[slot].group = static_cast<size_t>(group);
+  }
+  if (dense_null_group_ >= 0) {
+    bool inserted = false;
+    const size_t slot = FlatFindOrInsert(0, true, &inserted);
+    flat_slots_[slot].group = static_cast<size_t>(dense_null_group_);
+  }
+  dense_group_ids_.clear();
+  dense_null_group_ = -1;
+  dense_active_ = false;
+}
+
+arrow::Status
+AggregateOperator::BuildGroupIds(int64_t num_rows,
+                                 const std::vector<std::shared_ptr<arrow::Array>>& group_arrays,
+                                 std::vector<size_t>& group_ids) {
+  group_ids.resize(static_cast<size_t>(num_rows));
+  if (group_by_.empty()) {
+    if (groups_.empty())
+      AddGroup(Group{});
+    std::fill(group_ids.begin(), group_ids.end(), size_t{0});
+    return arrow::Status::OK();
+  }
+
+  if (group_by_.size() == 1) {
+    const auto& key_type = *group_arrays[0]->type();
+    if (IsIntegerKeyType(key_type)) {
+      group_key_mode_ = 1;
+    } else if (IsStringKeyType(key_type)) {
+      group_key_mode_ = 2;
+    } else {
+      group_key_mode_ = -1;
+    }
+  } else {
+    group_key_mode_ = -1;
+  }
+
+  if (group_key_mode_ == 1) {
+    const auto& key_array = *group_arrays[0];
+    auto add_key_group = [&](int64_t row) -> arrow::Result<size_t> {
+      const size_t group_index = groups_.size();
+      Group group;
+      group.keys.reserve(1);
+      ARROW_ASSIGN_OR_RAISE(auto scalar, key_array.GetScalar(row));
+      group.keys.push_back(std::move(scalar));
+      AddGroup(std::move(group));
+      return group_index;
+    };
+
+    if (!dense_active_ && groups_.empty() && flat_size_ == 0) {
+      bool have_key = false;
+      bool supported = true;
+      int64_t min_key = 0;
+      int64_t max_key = 0;
+      for (int64_t row = 0; row < num_rows; ++row) {
+        if (key_array.IsNull(row))
+          continue;
+        int64_t key = 0;
+        if (!SignedIntegerKeyAt(key_array, row, &key)) {
+          supported = false;
+          break;
+        }
+        if (!have_key || key < min_key)
+          min_key = key;
+        if (!have_key || key > max_key)
+          max_key = key;
+        have_key = true;
       }
-      state.has_value = true;
-    } else if (aggregate.function == "avg") {
-      ARROW_ASSIGN_OR_RAISE(auto value, ArrayAsDouble(arguments, row));
-      state.double_sum += value;
-      ++state.count;
-      state.has_value = true;
-    } else if (aggregate.function == "min" || aggregate.function == "max") {
-      if (!state.has_value) {
-        ARROW_ASSIGN_OR_RAISE(state.extreme, arguments.GetScalar(row));
-        state.has_value = true;
-      } else {
-        ARROW_ASSIGN_OR_RAISE(int cmp, CompareArrayToScalar(arguments, row, *state.extreme));
-        const bool better = aggregate.function == "min" ? cmp < 0 : cmp > 0;
-        if (better) {
-          ARROW_ASSIGN_OR_RAISE(state.extreme, arguments.GetScalar(row));
+      if (supported && have_key) {
+        const uint64_t span = static_cast<uint64_t>(max_key) - static_cast<uint64_t>(min_key);
+        if (span < kMaxDenseRange) {
+          dense_min_key_ = min_key;
+          dense_max_key_ = max_key;
+          dense_group_ids_.assign(static_cast<size_t>(span + 1), int32_t{-1});
+          dense_null_group_ = -1;
+          dense_active_ = true;
         }
       }
     }
+
+    if (dense_active_) {
+      bool dense_ok = true;
+      for (int64_t row = 0; row < num_rows; ++row) {
+        const bool is_null = key_array.IsNull(row);
+        size_t group_index;
+        if (is_null) {
+          if (dense_null_group_ < 0) {
+            if (groups_.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+              dense_ok = false;
+              break;
+            }
+            ARROW_ASSIGN_OR_RAISE(group_index, add_key_group(row));
+            dense_null_group_ = static_cast<int32_t>(group_index);
+          } else {
+            group_index = static_cast<size_t>(dense_null_group_);
+          }
+        } else {
+          int64_t key = 0;
+          if (!SignedIntegerKeyAt(key_array, row, &key) || !ExpandDenseKey(key)) {
+            dense_ok = false;
+            break;
+          }
+          const size_t index = static_cast<size_t>(static_cast<uint64_t>(key) -
+                                                   static_cast<uint64_t>(dense_min_key_));
+          const int32_t existing = dense_group_ids_[index];
+          if (existing >= 0) {
+            group_index = static_cast<size_t>(existing);
+          } else {
+            if (groups_.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+              dense_ok = false;
+              break;
+            }
+            ARROW_ASSIGN_OR_RAISE(group_index, add_key_group(row));
+            dense_group_ids_[index] = static_cast<int32_t>(group_index);
+          }
+        }
+        group_ids[static_cast<size_t>(row)] = group_index;
+      }
+      if (dense_ok)
+        return arrow::Status::OK();
+      DisableDense();
+      // Rebuild this batch through the flat table. Groups created during the
+      // partial dense pass are retained.
+    }
+
+    for (int64_t row = 0; row < num_rows; ++row) {
+      const bool is_null = key_array.IsNull(row);
+      const uint64_t key = is_null ? 0 : IntegerKeyAt(key_array, row);
+      bool inserted = false;
+      const size_t slot = FlatFindOrInsert(key, is_null, &inserted);
+      size_t group_index;
+      if (inserted) {
+        ARROW_ASSIGN_OR_RAISE(group_index, add_key_group(row));
+        flat_slots_[slot].group = group_index;
+      } else {
+        group_index = flat_slots_[slot].group;
+      }
+      group_ids[static_cast<size_t>(row)] = group_index;
+    }
+    return arrow::Status::OK();
+  }
+
+  if (group_key_mode_ == 2) {
+    const auto& key_array = *group_arrays[0];
+    auto add_key_group = [&](int64_t row) -> arrow::Result<size_t> {
+      const size_t group_index = groups_.size();
+      Group group;
+      group.keys.reserve(1);
+      ARROW_ASSIGN_OR_RAISE(auto scalar, key_array.GetScalar(row));
+      group.keys.push_back(std::move(scalar));
+      AddGroup(std::move(group));
+      return group_index;
+    };
+
+    for (int64_t row = 0; row < num_rows; ++row) {
+      if (!string_map_active_ && small_string_groups_.size() >= kSmallStringGroups) {
+        group_index_.reserve(kSmallStringGroups * 2);
+        for (auto& entry : small_string_groups_)
+          group_index_.emplace(std::move(entry.key), entry.group);
+        small_string_groups_.clear();
+        string_map_active_ = true;
+      }
+
+      if (key_array.IsNull(row)) {
+        size_t group_index;
+        if (small_null_group_ < 0) {
+          ARROW_ASSIGN_OR_RAISE(group_index, add_key_group(row));
+          small_null_group_ = static_cast<int32_t>(group_index);
+        } else {
+          group_index = static_cast<size_t>(small_null_group_);
+        }
+        group_ids[static_cast<size_t>(row)] = group_index;
+        continue;
+      }
+
+      const std::string_view key = ArrayStringView(key_array, row);
+      size_t group_index = 0;
+      if (!string_map_active_) {
+        bool found = false;
+        for (const auto& entry : small_string_groups_) {
+          if (entry.key == key) {
+            group_index = entry.group;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          ARROW_ASSIGN_OR_RAISE(group_index, add_key_group(row));
+          small_string_groups_.push_back({std::string(key), group_index});
+        }
+      } else {
+        auto found = group_index_.find(key);
+        if (found == group_index_.end()) {
+          ARROW_ASSIGN_OR_RAISE(group_index, add_key_group(row));
+          group_index_.emplace(std::string(key), group_index);
+        } else {
+          group_index = found->second;
+        }
+      }
+      group_ids[static_cast<size_t>(row)] = group_index;
+    }
+    return arrow::Status::OK();
+  }
+
+  // Generic keys are serialized once per row, then the aggregate values are
+  // accumulated in separate batch passes. This keeps the hot aggregate loops
+  // free of key construction, map lookups, and per-aggregate branches.
+  std::string key;
+  key.reserve(group_arrays.size() * 10);
+  for (int64_t row = 0; row < num_rows; ++row) {
+    key.clear();
+    for (const auto& array : group_arrays) {
+      ARROW_RETURN_NOT_OK(AppendArrayKey(*array, row, key));
+    }
+
+    auto found = group_index_.find(key);
+    size_t group_index;
+    if (found == group_index_.end()) {
+      group_index = groups_.size();
+      group_index_.emplace(key, group_index);
+      Group group;
+      group.keys.reserve(group_arrays.size());
+      for (const auto& array : group_arrays) {
+        ARROW_ASSIGN_OR_RAISE(auto scalar, array->GetScalar(row));
+        group.keys.push_back(std::move(scalar));
+      }
+      AddGroup(std::move(group));
+    } else {
+      group_index = found->second;
+    }
+    group_ids[static_cast<size_t>(row)] = group_index;
+  }
+  return arrow::Status::OK();
+}
+
+arrow::Status AggregateOperator::AccumulateBatch(
+    const std::vector<std::shared_ptr<arrow::Array>>& argument_arrays,
+    const std::vector<size_t>& group_ids) {
+  const int64_t num_rows = static_cast<int64_t>(group_ids.size());
+  const size_t num_aggregates = aggregates_.size();
+
+  // The common analytical shape (COUNT/SUM/AVG with no MIN/MAX) is fused into
+  // one pass. Each row updates all of its group's adjacent states, so a
+  // high-cardinality query pays one random access per row instead of one per
+  // aggregate. Values and validity bitmaps are resolved once per batch.
+  bool simple_aggregates = true;
+  for (size_t i = 0; i < aggregates_.size(); ++i) {
+    const auto function = aggregates_[i]->function;
+    if (function == "min" || function == "max") {
+      const auto type_id = argument_arrays[i]->type_id();
+      if (type_id != arrow::Type::FLOAT && type_id != arrow::Type::DOUBLE) {
+        simple_aggregates = false;
+        break;
+      }
+      continue;
+    }
+    if (function != "count" && function != "sum" && function != "avg") {
+      simple_aggregates = false;
+      break;
+    }
+  }
+
+  if (simple_aggregates) {
+    enum class FastKind : uint8_t {
+      kCountStar,
+      kCount,
+      kSumDouble,
+      kSumInt,
+      kAvg,
+      kMinDouble,
+      kMaxDouble
+    };
+    struct FastView {
+      FastKind kind = FastKind::kCountStar;
+      const double* doubles = nullptr;
+      const int64_t* ints = nullptr;
+      const uint8_t* bitmap = nullptr;
+      int64_t offset = 0;
+    };
+
+    std::vector<FastView> views(num_aggregates);
+    std::vector<std::shared_ptr<arrow::Array>> keepalive(num_aggregates);
+    for (size_t i = 0; i < num_aggregates; ++i) {
+      const auto& aggregate = *aggregates_[i];
+      FastView& view = views[i];
+      if (aggregate.star) {
+        view.kind = FastKind::kCountStar;
+        continue;
+      }
+
+      const auto& arguments = *argument_arrays[i];
+      view.bitmap = arguments.null_bitmap_data();
+      view.offset = arguments.offset();
+      if (aggregate.function == "count") {
+        view.kind = FastKind::kCount;
+        continue;
+      }
+
+      if (aggregate.function == "min" || aggregate.function == "max") {
+        std::shared_ptr<arrow::Array> numeric = argument_arrays[i];
+        if (numeric->type_id() != arrow::Type::DOUBLE) {
+          ARROW_ASSIGN_OR_RAISE(auto casted, arrow::compute::Cast(*numeric, arrow::float64()));
+          numeric = casted;
+          keepalive[i] = numeric;
+        }
+        const auto& values = checked_cast<const arrow::DoubleArray&>(*numeric);
+        view.kind = aggregate.function == "min" ? FastKind::kMinDouble : FastKind::kMaxDouble;
+        view.doubles = values.raw_values();
+        view.bitmap = values.null_bitmap_data();
+        view.offset = values.offset();
+        continue;
+      }
+
+      const bool double_output =
+          output_schema_->field(static_cast<int>(group_by_.size() + i))->type()->id() ==
+          arrow::Type::DOUBLE;
+      if (aggregate.function == "avg" || double_output) {
+        std::shared_ptr<arrow::Array> numeric = argument_arrays[i];
+        if (numeric->type_id() != arrow::Type::DOUBLE) {
+          ARROW_ASSIGN_OR_RAISE(auto casted, arrow::compute::Cast(*numeric, arrow::float64()));
+          numeric = casted;
+          keepalive[i] = numeric;
+        }
+        const auto& values = checked_cast<const arrow::DoubleArray&>(*numeric);
+        view.kind = aggregate.function == "avg" ? FastKind::kAvg : FastKind::kSumDouble;
+        view.doubles = values.raw_values();
+        view.bitmap = values.null_bitmap_data();
+        view.offset = values.offset();
+      } else {
+        std::shared_ptr<arrow::Array> numeric = argument_arrays[i];
+        if (numeric->type_id() != arrow::Type::INT64) {
+          ARROW_ASSIGN_OR_RAISE(auto casted, arrow::compute::Cast(*numeric, arrow::int64()));
+          numeric = casted;
+          keepalive[i] = numeric;
+        }
+        const auto& values = checked_cast<const arrow::Int64Array&>(*numeric);
+        view.kind = FastKind::kSumInt;
+        view.ints = values.raw_values();
+        view.bitmap = values.null_bitmap_data();
+        view.offset = values.offset();
+      }
+    }
+
+    AggState* states = states_.data();
+    for (int64_t row = 0; row < num_rows; ++row) {
+      AggState* group_state = states + group_ids[static_cast<size_t>(row)] * num_aggregates;
+      for (size_t i = 0; i < num_aggregates; ++i) {
+        const FastView& view = views[i];
+        AggState& state = group_state[i];
+        if (view.kind == FastKind::kCountStar) {
+          ++state.count;
+          continue;
+        }
+        if (view.bitmap != nullptr && !arrow::bit_util::GetBit(view.bitmap, view.offset + row)) {
+          continue;
+        }
+        switch (view.kind) {
+        case FastKind::kCount:
+          ++state.count;
+          break;
+        case FastKind::kSumDouble:
+          state.double_sum += view.doubles[view.offset + row];
+          state.has_value = true;
+          break;
+        case FastKind::kSumInt:
+          state.int_sum += view.ints[view.offset + row];
+          state.has_value = true;
+          break;
+        case FastKind::kAvg:
+          state.double_sum += view.doubles[view.offset + row];
+          ++state.count;
+          state.has_value = true;
+          break;
+        case FastKind::kMinDouble:
+        case FastKind::kMaxDouble: {
+          const double value = view.doubles[view.offset + row];
+          const bool better = !state.has_value ||
+                              (view.kind == FastKind::kMinDouble ? value < state.double_extreme
+                                                                 : value > state.double_extreme);
+          if (better) {
+            state.extreme_kind = ExtremeKind::kDouble;
+            state.double_extreme = value;
+            state.has_value = true;
+          }
+          break;
+        }
+        case FastKind::kCountStar:
+          break;
+        }
+      }
+    }
+    return arrow::Status::OK();
+  }
+
+  const size_t state_stride = aggregates_.size();
+  for (size_t i = 0; i < state_stride; ++i) {
+    const auto& aggregate = *aggregates_[i];
+    auto state_at = [&](int64_t row) -> AggState& {
+      return states_[group_ids[static_cast<size_t>(row)] * state_stride + i];
+    };
+    if (aggregate.star) {
+      for (int64_t row = 0; row < num_rows; ++row) {
+        ++state_at(row).count;
+      }
+      continue;
+    }
+
+    const auto& arguments = *argument_arrays[i];
+    if (aggregate.function == "count") {
+      const uint8_t* bitmap = arguments.null_bitmap_data();
+      const int64_t offset = arguments.offset();
+      if (bitmap == nullptr) {
+        for (int64_t row = 0; row < num_rows; ++row) {
+          ++state_at(row).count;
+        }
+      } else {
+        for (int64_t row = 0; row < num_rows; ++row) {
+          if (arrow::bit_util::GetBit(bitmap, offset + row)) {
+            ++state_at(row).count;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (aggregate.function == "sum" || aggregate.function == "avg") {
+      const bool double_output =
+          output_schema_->field(static_cast<int>(group_by_.size() + i))->type()->id() ==
+          arrow::Type::DOUBLE;
+      if (aggregate.function == "avg" || double_output) {
+        std::shared_ptr<arrow::Array> numeric = argument_arrays[i];
+        if (numeric->type_id() != arrow::Type::DOUBLE) {
+          ARROW_ASSIGN_OR_RAISE(auto casted, arrow::compute::Cast(*numeric, arrow::float64()));
+          numeric = casted;
+        }
+        const auto& values = checked_cast<const arrow::DoubleArray&>(*numeric);
+        const double* data = values.raw_values();
+        const uint8_t* bitmap = values.null_bitmap_data();
+        const int64_t offset = values.offset();
+        if (bitmap == nullptr) {
+          for (int64_t row = 0; row < num_rows; ++row) {
+            AggState& state = state_at(row);
+            state.double_sum += data[offset + row];
+            state.has_value = true;
+            if (aggregate.function == "avg")
+              ++state.count;
+          }
+        } else {
+          for (int64_t row = 0; row < num_rows; ++row) {
+            if (!arrow::bit_util::GetBit(bitmap, offset + row))
+              continue;
+            AggState& state = state_at(row);
+            state.double_sum += data[offset + row];
+            state.has_value = true;
+            if (aggregate.function == "avg")
+              ++state.count;
+          }
+        }
+      } else {
+        std::shared_ptr<arrow::Array> numeric = argument_arrays[i];
+        if (numeric->type_id() != arrow::Type::INT64) {
+          ARROW_ASSIGN_OR_RAISE(auto casted, arrow::compute::Cast(*numeric, arrow::int64()));
+          numeric = casted;
+        }
+        const auto& values = checked_cast<const arrow::Int64Array&>(*numeric);
+        const int64_t* data = values.raw_values();
+        const uint8_t* bitmap = values.null_bitmap_data();
+        const int64_t offset = values.offset();
+        if (bitmap == nullptr) {
+          for (int64_t row = 0; row < num_rows; ++row) {
+            AggState& state = state_at(row);
+            state.int_sum += data[offset + row];
+            state.has_value = true;
+          }
+        } else {
+          for (int64_t row = 0; row < num_rows; ++row) {
+            if (!arrow::bit_util::GetBit(bitmap, offset + row))
+              continue;
+            AggState& state = state_at(row);
+            state.int_sum += data[offset + row];
+            state.has_value = true;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (aggregate.function != "min" && aggregate.function != "max") {
+      return arrow::Status::Invalid("unsupported aggregate function " + aggregate.function);
+    }
+
+    const bool want_min = aggregate.function == "min";
+    const auto type_id = arguments.type_id();
+    if (arrow::is_integer(type_id) || type_id == arrow::Type::DATE32) {
+      std::shared_ptr<arrow::Array> numeric = argument_arrays[i];
+      if (type_id != arrow::Type::INT64 && type_id != arrow::Type::DATE32) {
+        ARROW_ASSIGN_OR_RAISE(auto casted, arrow::compute::Cast(*numeric, arrow::int64()));
+        numeric = casted;
+      }
+      const int64_t* data = nullptr;
+      const uint8_t* bitmap = numeric->null_bitmap_data();
+      const int64_t offset = numeric->offset();
+      const bool is_date = numeric->type_id() == arrow::Type::DATE32;
+      std::vector<int64_t> dates;
+      if (is_date) {
+        const auto& date_values = checked_cast<const arrow::Date32Array&>(*numeric);
+        dates.resize(static_cast<size_t>(num_rows));
+        for (int64_t row = 0; row < num_rows; ++row)
+          dates[static_cast<size_t>(row)] = date_values.Value(row);
+        data = dates.data();
+      } else {
+        data = checked_cast<const arrow::Int64Array&>(*numeric).raw_values();
+      }
+      if (bitmap == nullptr) {
+        for (int64_t row = 0; row < num_rows; ++row) {
+          AggState& state = state_at(row);
+          const int64_t value = is_date ? data[row] : data[offset + row];
+          if (!state.has_value ||
+              (want_min ? value < state.int_extreme : value > state.int_extreme)) {
+            state.extreme_kind = ExtremeKind::kInt64;
+            state.int_extreme = value;
+            state.has_value = true;
+          }
+        }
+      } else {
+        for (int64_t row = 0; row < num_rows; ++row) {
+          if (!arrow::bit_util::GetBit(bitmap, offset + row))
+            continue;
+          AggState& state = state_at(row);
+          const int64_t value = is_date ? data[row] : data[offset + row];
+          if (!state.has_value ||
+              (want_min ? value < state.int_extreme : value > state.int_extreme)) {
+            state.extreme_kind = ExtremeKind::kInt64;
+            state.int_extreme = value;
+            state.has_value = true;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (type_id == arrow::Type::FLOAT || type_id == arrow::Type::DOUBLE) {
+      std::shared_ptr<arrow::Array> numeric = argument_arrays[i];
+      if (type_id != arrow::Type::DOUBLE) {
+        ARROW_ASSIGN_OR_RAISE(auto casted, arrow::compute::Cast(*numeric, arrow::float64()));
+        numeric = casted;
+      }
+      const auto& values = checked_cast<const arrow::DoubleArray&>(*numeric);
+      const double* data = values.raw_values();
+      const uint8_t* bitmap = values.null_bitmap_data();
+      const int64_t offset = values.offset();
+      if (bitmap == nullptr) {
+        for (int64_t row = 0; row < num_rows; ++row) {
+          AggState& state = state_at(row);
+          const double value = data[offset + row];
+          if (!state.has_value ||
+              (want_min ? value < state.double_extreme : value > state.double_extreme)) {
+            state.extreme_kind = ExtremeKind::kDouble;
+            state.double_extreme = value;
+            state.has_value = true;
+          }
+        }
+      } else {
+        for (int64_t row = 0; row < num_rows; ++row) {
+          if (!arrow::bit_util::GetBit(bitmap, offset + row))
+            continue;
+          AggState& state = state_at(row);
+          const double value = data[offset + row];
+          if (!state.has_value ||
+              (want_min ? value < state.double_extreme : value > state.double_extreme)) {
+            state.extreme_kind = ExtremeKind::kDouble;
+            state.double_extreme = value;
+            state.has_value = true;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (type_id == arrow::Type::BOOL) {
+      const auto& values = checked_cast<const arrow::BooleanArray&>(arguments);
+      const uint8_t* bitmap = values.null_bitmap_data();
+      for (int64_t row = 0; row < num_rows; ++row) {
+        if (bitmap != nullptr && !arrow::bit_util::GetBit(bitmap, values.offset() + row))
+          continue;
+        AggState& state = state_at(row);
+        const bool value = values.Value(row);
+        if (!state.has_value ||
+            (want_min ? value < state.bool_extreme : value > state.bool_extreme)) {
+          state.extreme_kind = ExtremeKind::kBool;
+          state.bool_extreme = value;
+          state.has_value = true;
+        }
+      }
+      continue;
+    }
+
+    if (type_id == arrow::Type::STRING || type_id == arrow::Type::LARGE_STRING ||
+        type_id == arrow::Type::BINARY) {
+      const uint8_t* bitmap = arguments.null_bitmap_data();
+      const int64_t offset = arguments.offset();
+      for (int64_t row = 0; row < num_rows; ++row) {
+        if (bitmap != nullptr && !arrow::bit_util::GetBit(bitmap, offset + row))
+          continue;
+        AggState& state = state_at(row);
+        const std::string_view value = ArrayStringView(arguments, row);
+        if (!state.has_value) {
+          state.extreme_kind = ExtremeKind::kString;
+          state.string_extreme = std::make_unique<std::string>(value);
+          state.has_value = true;
+        } else {
+          const int cmp = state.string_extreme->compare(value);
+          if ((want_min && cmp > 0) || (!want_min && cmp < 0)) {
+            state.string_extreme->assign(value);
+          }
+        }
+      }
+      continue;
+    }
+
+    return arrow::Status::Invalid("MIN/MAX does not support type " + arguments.type()->ToString());
   }
   return arrow::Status::OK();
 }
@@ -840,13 +1379,10 @@ arrow::Status AggregateOperator::Consume(const std::shared_ptr<arrow::RecordBatc
   if (group_by_.empty() && !aggregates_.empty() &&
       std::all_of(aggregates_.begin(), aggregates_.end(),
                   [](const sql::ExprPtr& aggregate) { return aggregate->star; })) {
-    if (groups_.empty()) {
-      Group group;
-      group.states.resize(aggregates_.size());
-      groups_.push_back(std::move(group));
-    }
-    for (auto& state : groups_[0].states)
-      state.count += batch->num_rows();
+    if (groups_.empty())
+      AddGroup(Group{});
+    for (size_t i = 0; i < aggregates_.size(); ++i)
+      State(i, 0).count += batch->num_rows();
     return arrow::Status::OK();
   }
 
@@ -876,77 +1412,8 @@ arrow::Status AggregateOperator::Consume(const std::shared_ptr<arrow::RecordBatc
     }
   }
 
-  if (group_by_.size() == 1) {
-    if (group_key_mode_ == 0) {
-      group_key_mode_ = IsIntegerKeyType(*group_arrays[0]->type()) ? 1 : -1;
-    }
-  } else {
-    group_key_mode_ = -1;
-  }
-
-  if (group_key_mode_ == 1) {
-    const auto& key_array = *group_arrays[0];
-    for (int64_t row = 0; row < batch->num_rows(); ++row) {
-      const bool is_null = key_array.IsNull(row);
-      const uint64_t key = is_null ? 0 : IntegerKeyAt(key_array, row);
-      bool inserted = false;
-      const size_t slot = FlatFindOrInsert(key, is_null, &inserted);
-      size_t group_index;
-      if (inserted) {
-        group_index = groups_.size();
-        Group group;
-        group.keys.reserve(1);
-        ARROW_ASSIGN_OR_RAISE(auto scalar, key_array.GetScalar(row));
-        group.keys.push_back(std::move(scalar));
-        group.states.resize(aggregates_.size());
-        groups_.push_back(std::move(group));
-        flat_slots_[slot].group = group_index;
-      } else {
-        group_index = flat_slots_[slot].group;
-      }
-      ARROW_RETURN_NOT_OK(UpdateGroup(groups_[group_index], row, argument_arrays));
-    }
-    return arrow::Status::OK();
-  }
-
-  std::string key;
-  key.reserve(group_arrays.size() * 10);
-  for (int64_t row = 0; row < batch->num_rows(); ++row) {
-    key.clear();
-    for (const auto& array : group_arrays) {
-      ARROW_RETURN_NOT_OK(AppendArrayKey(*array, row, key));
-    }
-
-    size_t group_index = 0;
-    if (group_by_.empty()) {
-      if (groups_.empty()) {
-        Group group;
-        group.states.resize(aggregates_.size());
-        groups_.push_back(std::move(group));
-        group_index_[key] = 0;
-      }
-    } else {
-      auto found = group_index_.find(key);
-      if (found == group_index_.end()) {
-        group_index = groups_.size();
-        group_index_.emplace(std::move(key), group_index);
-        Group group;
-        group.keys.reserve(group_arrays.size());
-        // Materialize the key values only for the first row of each group.
-        for (const auto& array : group_arrays) {
-          ARROW_ASSIGN_OR_RAISE(auto scalar, array->GetScalar(row));
-          group.keys.push_back(std::move(scalar));
-        }
-        group.states.resize(aggregates_.size());
-        groups_.push_back(std::move(group));
-      } else {
-        group_index = found->second;
-      }
-    }
-
-    ARROW_RETURN_NOT_OK(UpdateGroup(groups_[group_index], row, argument_arrays));
-  }
-  return arrow::Status::OK();
+  ARROW_RETURN_NOT_OK(BuildGroupIds(batch->num_rows(), group_arrays, batch_group_ids_));
+  return AccumulateBatch(argument_arrays, batch_group_ids_);
 }
 
 arrow::Status
@@ -1008,20 +1475,17 @@ AggregateOperator::ConsumeGpu(const std::shared_ptr<arrow::RecordBatch>& batch,
     stats_->gpu_attempted = true;
   }
 
-  if (groups_.empty()) {
-    Group group;
-    group.states.resize(aggregates_.size());
-    groups_.push_back(std::move(group));
-  }
+  if (groups_.empty())
+    AddGroup(Group{});
 
   for (size_t i = 0; i < aggregates_.size(); ++i) {
     const auto& aggregate = *aggregates_[i];
     if (aggregate.function == "count") {
       if (aggregate.star) {
-        groups_[0].states[i].count += batch->num_rows();
+        State(i, 0).count += batch->num_rows();
       } else {
         const auto& arguments = argument_arrays[i];
-        groups_[0].states[i].count += arguments->length() - arguments->null_count();
+        State(i, 0).count += arguments->length() - arguments->null_count();
       }
       continue;
     }
@@ -1102,18 +1566,15 @@ arrow::Status AggregateOperator::FinishGpu() {
     }
   }
 
-  if (groups_.empty()) {
-    Group group;
-    group.states.resize(aggregates_.size());
-    groups_.push_back(std::move(group));
-  }
+  if (groups_.empty())
+    AddGroup(Group{});
 
   for (size_t i = 0; i < aggregates_.size(); ++i) {
     const auto& aggregate = *aggregates_[i];
     if (aggregate.function != "sum" && aggregate.function != "avg")
       continue;
     const GpuBuffer& buffer = gpu_buffers_[i];
-    AggState& state = groups_[0].states[i];
+    AggState& state = State(i, 0);
     if (buffer.count == 0)
       continue;
     state.double_sum += buffer.sum;
@@ -1125,11 +1586,8 @@ arrow::Status AggregateOperator::FinishGpu() {
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::BuildResult() {
-  if (groups_.empty() && group_by_.empty()) {
-    Group group;
-    group.states.resize(aggregates_.size());
-    groups_.push_back(std::move(group));
-  }
+  if (groups_.empty() && group_by_.empty())
+    AddGroup(Group{});
   if (groups_.empty())
     return MakeEmptyBatchImpl(output_schema_);
 
@@ -1167,8 +1625,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::BuildResul
       ARROW_ASSIGN_OR_RAISE(builder, arrow::MakeBuilder(out_type));
     }
 
-    for (const auto& group : groups_) {
-      const AggState& state = group.states[i];
+    for (size_t group_index = 0; group_index < groups_.size(); ++group_index) {
+      const AggState& state = State(i, group_index);
       if (aggregate.function == "count") {
         ARROW_RETURN_NOT_OK(checked_cast<arrow::Int64Builder&>(*builder).Append(state.count));
       } else if (aggregate.function == "sum") {
@@ -1195,8 +1653,83 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> AggregateOperator::BuildResul
       } else if (aggregate.function == "min" || aggregate.function == "max") {
         if (!state.has_value) {
           ARROW_RETURN_NOT_OK(builder->AppendNull());
+        } else if (state.extreme_kind == ExtremeKind::kInt64) {
+          const int64_t value = state.int_extreme;
+          switch (out_type->id()) {
+          case arrow::Type::INT8:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::Int8Builder&>(*builder).Append(static_cast<int8_t>(value)));
+            break;
+          case arrow::Type::INT16:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::Int16Builder&>(*builder).Append(static_cast<int16_t>(value)));
+            break;
+          case arrow::Type::INT32:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::Int32Builder&>(*builder).Append(static_cast<int32_t>(value)));
+            break;
+          case arrow::Type::INT64:
+            ARROW_RETURN_NOT_OK(checked_cast<arrow::Int64Builder&>(*builder).Append(value));
+            break;
+          case arrow::Type::UINT8:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::UInt8Builder&>(*builder).Append(static_cast<uint8_t>(value)));
+            break;
+          case arrow::Type::UINT16:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::UInt16Builder&>(*builder).Append(static_cast<uint16_t>(value)));
+            break;
+          case arrow::Type::UINT32:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::UInt32Builder&>(*builder).Append(static_cast<uint32_t>(value)));
+            break;
+          case arrow::Type::UINT64:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::UInt64Builder&>(*builder).Append(static_cast<uint64_t>(value)));
+            break;
+          case arrow::Type::DATE32:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::Date32Builder&>(*builder).Append(static_cast<int32_t>(value)));
+            break;
+          default:
+            return arrow::Status::Invalid("MIN/MAX cannot build output type " +
+                                          out_type->ToString());
+          }
+        } else if (state.extreme_kind == ExtremeKind::kDouble) {
+          if (out_type->id() == arrow::Type::FLOAT) {
+            ARROW_RETURN_NOT_OK(checked_cast<arrow::FloatBuilder&>(*builder).Append(
+                static_cast<float>(state.double_extreme)));
+          } else if (out_type->id() == arrow::Type::DOUBLE) {
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::DoubleBuilder&>(*builder).Append(state.double_extreme));
+          } else {
+            return arrow::Status::Invalid("MIN/MAX cannot build output type " +
+                                          out_type->ToString());
+          }
+        } else if (state.extreme_kind == ExtremeKind::kBool) {
+          ARROW_RETURN_NOT_OK(
+              checked_cast<arrow::BooleanBuilder&>(*builder).Append(state.bool_extreme));
+        } else if (state.extreme_kind == ExtremeKind::kString) {
+          switch (out_type->id()) {
+          case arrow::Type::STRING:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::StringBuilder&>(*builder).Append(*state.string_extreme));
+            break;
+          case arrow::Type::LARGE_STRING:
+            ARROW_RETURN_NOT_OK(
+                checked_cast<arrow::LargeStringBuilder&>(*builder).Append(*state.string_extreme));
+            break;
+          case arrow::Type::BINARY:
+            ARROW_RETURN_NOT_OK(checked_cast<arrow::BinaryBuilder&>(*builder).Append(
+                reinterpret_cast<const uint8_t*>(state.string_extreme->data()),
+                static_cast<int32_t>(state.string_extreme->size())));
+            break;
+          default:
+            return arrow::Status::Invalid("MIN/MAX cannot build output type " +
+                                          out_type->ToString());
+          }
         } else {
-          ARROW_RETURN_NOT_OK(builder->AppendScalar(*state.extreme));
+          return arrow::Status::Invalid("MIN/MAX has no accumulated value");
         }
       }
     }
