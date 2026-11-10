@@ -177,6 +177,21 @@ def assert_matches_duckdb(data_dir: Path, conn, query: str, *extra: str) -> Run:
     return run
 
 
+def assert_matches_batch_invariant(
+    data_dir: Path, query: str, conn, tables: Iterable[str] = TABLE_NAMES
+) -> None:
+    """Runs a query at several batch sizes and compares every row to DuckDB."""
+    expected = [normalize(row) for row in conn.execute(query).fetchall()]
+    for batch_size in ("1", "7", "128", "8192"):
+        run = run_qe(data_dir, query, "--batch-size", batch_size, "--no-stats", tables=tables)
+        assert run.returncode == 0, f"batch {batch_size}: {run.stderr}"
+        actual = run.rows
+        assert len(actual) == len(expected), (batch_size, len(actual), len(expected))
+        for actual_row, expected_row in zip(actual, expected):
+            for a, e in zip(actual_row, expected_row):
+                assert same_value(a, e), (batch_size, actual_row, expected_row)
+
+
 CORRECTNESS_QUERIES = [
     # Select / filter / order / limit.
     "SELECT sale_id, region, amount FROM sales WHERE amount > 1000 "
@@ -494,6 +509,83 @@ def test_wide_integer_keys_fall_back_to_flat_grouping(data_dir: Path, conn) -> N
     for actual_row, expected_row in zip(run.rows, expected):
         for a, e in zip(actual_row, expected_row):
             assert same_value(a, e), (actual_row, expected_row)
+
+
+def test_integer_join_typed_table_matches_duckdb(data_dir: Path, conn) -> None:
+    # Duplicate keys on both sides, a NULL key on each side, an unmatched
+    # probe key, and INT64 extremes: the typed single-key table must behave
+    # exactly like the serialized-key path, at any batch size.
+    build = data_dir / "join_build_typed.parquet"
+    probe = data_dir / "join_probe_typed.parquet"
+    conn.execute(
+        f"COPY (SELECT CASE i WHEN 0 THEN 1 WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 2 "
+        f"WHEN 4 THEN 2 WHEN 5 THEN NULL WHEN 6 THEN -7 "
+        f"WHEN 7 THEN 9223372036854775807 ELSE 13 END AS k, i AS v "
+        f"FROM range(10) t(i)) TO '{build.as_posix()}' (FORMAT PARQUET)"
+    )
+    conn.execute(
+        f"COPY (SELECT CASE i WHEN 0 THEN 1 WHEN 1 THEN 1 WHEN 2 THEN NULL WHEN 3 THEN 2 "
+        f"WHEN 4 THEN 5 WHEN 5 THEN -7 WHEN 6 THEN 999 "
+        f"WHEN 7 THEN 9223372036854775807 ELSE 13 END AS k, i AS w "
+        f"FROM range(9) t(i)) TO '{probe.as_posix()}' (FORMAT PARQUET)"
+    )
+    conn.execute(
+        f"CREATE VIEW join_build_typed AS SELECT * FROM read_parquet('{build.as_posix()}')"
+    )
+    conn.execute(
+        f"CREATE VIEW join_probe_typed AS SELECT * FROM read_parquet('{probe.as_posix()}')"
+    )
+
+    tables = ["join_build_typed", "join_probe_typed"]
+    assert_matches_batch_invariant(
+        data_dir,
+        "SELECT p.w, b.v FROM join_probe_typed p JOIN join_build_typed b "
+        "ON p.k = b.k ORDER BY p.w, b.v",
+        conn,
+        tables,
+    )
+    # The left join also exercises the unmatched-row and NULL-key path.
+    assert_matches_batch_invariant(
+        data_dir,
+        "SELECT p.w, b.v FROM join_probe_typed p LEFT JOIN join_build_typed b "
+        "ON p.k = b.k ORDER BY p.w, b.v",
+        conn,
+        tables,
+    )
+
+
+def test_string_join_typed_table_matches_duckdb(data_dir: Path, conn) -> None:
+    # The empty string is a real SQL value and must match; NULL must not.
+    build = data_dir / "join_build_str.parquet"
+    probe = data_dir / "join_probe_str.parquet"
+    conn.execute(
+        f"COPY (SELECT CASE i WHEN 0 THEN 'a' WHEN 1 THEN 'a' WHEN 2 THEN 'b' "
+        f"WHEN 3 THEN '' WHEN 4 THEN 'b' WHEN 5 THEN NULL ELSE 'z' END AS k, i AS v "
+        f"FROM range(9) t(i)) TO '{build.as_posix()}' (FORMAT PARQUET)"
+    )
+    conn.execute(
+        f"COPY (SELECT CASE i WHEN 0 THEN 'a' WHEN 1 THEN NULL WHEN 2 THEN 'b' "
+        f"WHEN 3 THEN 'missing' WHEN 4 THEN '' ELSE 'z' END AS k, i AS w "
+        f"FROM range(6) t(i)) TO '{probe.as_posix()}' (FORMAT PARQUET)"
+    )
+    conn.execute(f"CREATE VIEW join_build_str AS SELECT * FROM read_parquet('{build.as_posix()}')")
+    conn.execute(f"CREATE VIEW join_probe_str AS SELECT * FROM read_parquet('{probe.as_posix()}')")
+
+    tables = ["join_build_str", "join_probe_str"]
+    assert_matches_batch_invariant(
+        data_dir,
+        "SELECT p.w, b.v FROM join_probe_str p JOIN join_build_str b "
+        "ON p.k = b.k ORDER BY p.w, b.v",
+        conn,
+        tables,
+    )
+    assert_matches_batch_invariant(
+        data_dir,
+        "SELECT p.w, b.v FROM join_probe_str p LEFT JOIN join_build_str b "
+        "ON p.k = b.k ORDER BY p.w, b.v",
+        conn,
+        tables,
+    )
 
 
 def test_json_shape_and_table_output(data_dir: Path) -> None:

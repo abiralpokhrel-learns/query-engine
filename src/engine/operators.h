@@ -309,6 +309,34 @@ private:
   Probe(const std::shared_ptr<arrow::RecordBatch>& probe_batch,
         const std::vector<std::shared_ptr<arrow::Array>>& probe_keys);
 
+  // Single-key joins with compact integer or string keys use the tables below
+  // instead of the serialized-key map. The build side is materialized once, so
+  // its chains can be built in ascending row order in one pass; there is no
+  // aggregate-style cross-batch migration to support.
+  enum class JoinKeyMode : uint8_t { kGeneric, kInteger, kString };
+  struct IntegerSlot {
+    uint64_t key = 0;
+    int64_t head = -1;
+    int64_t last = -1;
+    bool used = false;
+  };
+  struct StringSlot {
+    std::string_view value;
+    size_t hash = 0;
+    int64_t head = -1;
+    int64_t last = -1;
+    bool used = false;
+  };
+
+  arrow::Status BuildKeyTable();
+  // Fills the index builders in the same order as the serialized-key path:
+  // probe rows in batch order, each with its matches in ascending build-row
+  // order. When preserve_unmatched is set, every probe row without a match
+  // appends a single (row, unmatched_build_row) pair.
+  arrow::Status MatchTyped(const std::shared_ptr<arrow::Array>& probe_key, bool preserve_unmatched,
+                           int64_t unmatched_build_row, arrow::Int64Builder& probe_rows,
+                           arrow::Int64Builder& build_rows);
+
   std::shared_ptr<Operator> left_;
   std::shared_ptr<Operator> right_;
   std::vector<JoinCondition> conditions_;
@@ -320,6 +348,11 @@ private:
   std::shared_ptr<arrow::RecordBatch> build_batch_;
   std::vector<std::shared_ptr<arrow::Array>> build_keys_;
   std::unordered_map<std::string, std::vector<int64_t>> hash_;
+  JoinKeyMode key_mode_ = JoinKeyMode::kGeneric;
+  std::vector<IntegerSlot> integer_slots_;
+  std::vector<StringSlot> string_slots_;
+  // For each build row, the next build row with the same key; -1 ends a chain.
+  std::vector<int64_t> next_row_;
   bool built_ = false;
   bool done_ = false;
 };
