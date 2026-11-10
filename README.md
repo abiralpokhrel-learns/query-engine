@@ -18,10 +18,12 @@ dataset detail needed to reproduce the numbers, and renders the published chart
 from that stored data.
 
 **Status: 0.2.0 with an optional CUDA global-aggregate path.** Version 1 is
-complete, and selected version 2 features are now implemented: `DISTINCT`,
+complete, and selected version 2 work is now implemented: `DISTINCT`,
 `HAVING`, `LEFT JOIN`, `IN` / `BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a
-top-k sort for `ORDER BY ... LIMIT`, and an opt-in CUDA build for global
-aggregates. All 180 tests (171 CPU correctness tests plus 9 GPU-gated tests that
+top-k sort for `ORDER BY ... LIMIT`, an opt-in CUDA build for global
+aggregates, and batch-vectorized hash aggregation (group IDs built once per
+batch, then one fused typed accumulation pass). All 180 tests (171 CPU
+correctness tests plus 9 GPU-gated tests that
 skip on CPU-only builds) pass against DuckDB on generated edge-case datasets,
 the C++ parser suite passes, and the differential fuzzer matches DuckDB on
 multi-seed sweeps. Every benchmark query is verified against DuckDB on the
@@ -273,6 +275,10 @@ Parquet files, including:
 - left joins with unmatched rows, `NULL` filters, and chained joins;
 - `DISTINCT`, `HAVING`, `OFFSET`, aliases, ordinals, and `LIMIT 0`;
 - top-k ordering and aggregate-after-join plans;
+- grouping fast paths: dense integer keys that grow in both directions across
+  batches, wide-key fallback to the flat hash table, low- and high-cardinality
+  string groups, and typed `MIN`/`MAX` outputs for integer, boolean, date, and
+  string columns;
 - unsupported SQL and CLI usage errors;
 - row-group skipping and column pruning asserted from `--explain` and scan stats;
 - metadata-only `COUNT(*)` and the empty plan it produces;
