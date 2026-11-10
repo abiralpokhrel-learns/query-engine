@@ -20,6 +20,8 @@ All notable changes to this project are documented here. The format follows
 - Community health files: private vulnerability-reporting policy, code of
   conduct, and cross-editor defaults.
 - Branch protection requiring pull requests and green CI before merge.
+- Decorative README hero image, documented in `docs/assets/README.md` as
+  artwork rather than measured output.
 - Optional CUDA global-aggregate path (`QE_ENABLE_CUDA`, `--gpu`) for
   no-`GROUP BY` queries that combine `COUNT` with floating-point `SUM`/`AVG`;
   the GPU computes the reductions while `COUNT`, filtering, and the scan stay
