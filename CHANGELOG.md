@@ -42,6 +42,14 @@ All notable changes to this project are documented here. The format follows
   The committed `group_customer` benchmark dropped from 555.51 ms to 230.04 ms;
   an alternating A/B run measured 2.42x on that query and 1.71x on
   `group_region`.
+- Single-key integer and string joins now build an open-addressed typed table on
+  the materialized build side and probe it with inline matching, preserving the
+  previous output order; multi-key and floating-point joins keep the serialized
+  key path. An alternating A/B run measured 1.79x on the `join_country`
+  benchmark query and 1.64x on a bare join-projection query.
+- Committed benchmark artifacts regenerated from a verified run:
+  `join_country` is 304.51 ms (3.66x DuckDB); other queries moved within the
+  documented cross-session drift.
 - CI now uses the current `actions/checkout` and `setup-micromamba` releases.
 
 ## [0.2.0] - 2026-11-06

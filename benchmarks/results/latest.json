@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-09T06:07:45.168160+00:00",
+  "generated_at": "2026-11-10T07:55:38.315959+00:00",
   "status": "completed_cpu_and_gpu",
   "engine": {
     "version_text": [
@@ -313,24 +313,24 @@
       ],
       "gpu": {
         "runs_ms": [
-          11.413,
-          6.497,
-          6.665
+          12.961,
+          10.106,
+          7.28
         ],
-        "median_ms": 6.665,
-        "min_ms": 6.497,
-        "max_ms": 11.413,
-        "parse_ms": 0.048,
-        "plan_ms": 1.834,
-        "catalog_ms": 8.679,
+        "median_ms": 10.106,
+        "min_ms": 7.28,
+        "max_ms": 12.961,
+        "parse_ms": 0.037,
+        "plan_ms": 1.125,
+        "catalog_ms": 8.009,
         "batch_size": 8192,
-        "transfer_ms": 0.314,
-        "kernel_ms": 0.1,
+        "transfer_ms": 0.217,
+        "kernel_ms": 0.05,
         "gpu": {
           "used": true,
           "batches": 1,
-          "transfer_ms": 0.314,
-          "kernel_ms": 0.1,
+          "transfer_ms": 0.217,
+          "kernel_ms": 0.05,
           "reason": null
         },
         "gpu_used": true,
@@ -353,23 +353,23 @@
         "gpu": {
           "used": true,
           "batches": 1,
-          "transfer_ms": 0.563,
-          "kernel_ms": 0.176,
+          "transfer_ms": 0.288,
+          "kernel_ms": 0.07,
           "reason": null
         }
       },
       "cpu": {
         "runs_ms": [
-          12.515,
-          6.188,
-          8.171
+          13.242,
+          5.767,
+          7.177
         ],
-        "median_ms": 8.171,
-        "min_ms": 6.188,
-        "max_ms": 12.515,
-        "parse_ms": 0.034,
-        "plan_ms": 1.426,
-        "catalog_ms": 8.139,
+        "median_ms": 7.177,
+        "min_ms": 5.767,
+        "max_ms": 13.242,
+        "parse_ms": 0.053,
+        "plan_ms": 1.805,
+        "catalog_ms": 9.823,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -380,13 +380,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          21.483014,
-          23.929653,
-          19.041961
+          24.297175,
+          21.791228,
+          20.714336
         ],
-        "median_ms": 21.483014,
-        "min_ms": 19.041961,
-        "max_ms": 23.929653,
+        "median_ms": 21.791228,
+        "min_ms": 20.714336,
+        "max_ms": 24.297175,
         "threads": 16
       },
       "gpu_reason": null
@@ -414,24 +414,24 @@
       ],
       "gpu": {
         "runs_ms": [
-          80.46,
-          70.86,
-          74.242
+          83.64,
+          80.573,
+          71.881
         ],
-        "median_ms": 74.242,
-        "min_ms": 70.86,
-        "max_ms": 80.46,
-        "parse_ms": 0.046,
-        "plan_ms": 1.459,
-        "catalog_ms": 10.735,
+        "median_ms": 80.573,
+        "min_ms": 71.881,
+        "max_ms": 83.64,
+        "parse_ms": 0.042,
+        "plan_ms": 1.294,
+        "catalog_ms": 9.308,
         "batch_size": 8192,
-        "transfer_ms": 3.16,
-        "kernel_ms": 0.227,
+        "transfer_ms": 3.179,
+        "kernel_ms": 0.629,
         "gpu": {
           "used": true,
           "batches": 2,
-          "transfer_ms": 3.16,
-          "kernel_ms": 0.227,
+          "transfer_ms": 3.179,
+          "kernel_ms": 0.629,
           "reason": null
         },
         "gpu_used": true,
@@ -458,23 +458,23 @@
         "gpu": {
           "used": true,
           "batches": 2,
-          "transfer_ms": 2.859,
-          "kernel_ms": 0.667,
+          "transfer_ms": 4.263,
+          "kernel_ms": 0.634,
           "reason": null
         }
       },
       "cpu": {
         "runs_ms": [
-          57.059,
-          55.607,
-          60.721
+          69.416,
+          59.919,
+          63.491
         ],
-        "median_ms": 57.059,
-        "min_ms": 55.607,
-        "max_ms": 60.721,
-        "parse_ms": 0.034,
-        "plan_ms": 1.848,
-        "catalog_ms": 9.472,
+        "median_ms": 63.491,
+        "min_ms": 59.919,
+        "max_ms": 69.416,
+        "parse_ms": 0.048,
+        "plan_ms": 1.531,
+        "catalog_ms": 9.396,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -485,13 +485,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          31.653565,
-          41.359723,
-          38.296617
+          62.888718,
+          47.342563,
+          37.312955
         ],
-        "median_ms": 38.296617,
-        "min_ms": 31.653565,
-        "max_ms": 41.359723,
+        "median_ms": 47.342563,
+        "min_ms": 37.312955,
+        "max_ms": 62.888718,
         "threads": 16
       },
       "gpu_reason": null
@@ -515,16 +515,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          4.977,
-          0.337,
-          0.244
+          5.208,
+          0.446,
+          0.237
         ],
-        "median_ms": 0.337,
-        "min_ms": 0.244,
-        "max_ms": 4.977,
-        "parse_ms": 0.035,
-        "plan_ms": 1.337,
-        "catalog_ms": 8.213,
+        "median_ms": 0.446,
+        "min_ms": 0.237,
+        "max_ms": 5.208,
+        "parse_ms": 0.034,
+        "plan_ms": 1.434,
+        "catalog_ms": 8.243,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -562,16 +562,16 @@
       },
       "cpu": {
         "runs_ms": [
-          5.165,
-          0.194,
-          0.081
+          5.513,
+          0.388,
+          0.162
         ],
-        "median_ms": 0.194,
-        "min_ms": 0.081,
-        "max_ms": 5.165,
-        "parse_ms": 0.031,
-        "plan_ms": 1.355,
-        "catalog_ms": 7.154,
+        "median_ms": 0.388,
+        "min_ms": 0.162,
+        "max_ms": 5.513,
+        "parse_ms": 0.029,
+        "plan_ms": 1.287,
+        "catalog_ms": 7.85,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -582,13 +582,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          9.817979,
-          12.46843,
-          10.104209
+          11.193584,
+          9.883491,
+          10.091294
         ],
-        "median_ms": 10.104209,
-        "min_ms": 9.817979,
-        "max_ms": 12.46843,
+        "median_ms": 10.091294,
+        "min_ms": 9.883491,
+        "max_ms": 11.193584,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -628,16 +628,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          126.735,
-          118.385,
-          121.154
+          137.905,
+          125.001,
+          181.202
         ],
-        "median_ms": 121.154,
-        "min_ms": 118.385,
-        "max_ms": 126.735,
-        "parse_ms": 0.046,
-        "plan_ms": 4.43,
-        "catalog_ms": 11.925,
+        "median_ms": 137.905,
+        "min_ms": 125.001,
+        "max_ms": 181.202,
+        "parse_ms": 0.042,
+        "plan_ms": 1.091,
+        "catalog_ms": 7.737,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -691,16 +691,16 @@
       },
       "cpu": {
         "runs_ms": [
-          123.41,
-          116.826,
-          120.103
+          136.717,
+          120.741,
+          125.891
         ],
-        "median_ms": 120.103,
-        "min_ms": 116.826,
-        "max_ms": 123.41,
-        "parse_ms": 0.038,
-        "plan_ms": 1.467,
-        "catalog_ms": 7.538,
+        "median_ms": 125.891,
+        "min_ms": 120.741,
+        "max_ms": 136.717,
+        "parse_ms": 0.041,
+        "plan_ms": 1.213,
+        "catalog_ms": 9.913,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -711,13 +711,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          42.56186,
-          39.074792,
-          39.322121
+          45.95432,
+          45.906822,
+          45.255726
         ],
-        "median_ms": 39.322121,
-        "min_ms": 39.074792,
-        "max_ms": 42.56186,
+        "median_ms": 45.906822,
+        "min_ms": 45.255726,
+        "max_ms": 45.95432,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -749,16 +749,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          218.724,
-          230.361,
-          243.528
+          242.214,
+          283.093,
+          210.252
         ],
-        "median_ms": 230.361,
-        "min_ms": 218.724,
-        "max_ms": 243.528,
-        "parse_ms": 0.043,
-        "plan_ms": 1.581,
-        "catalog_ms": 11.145,
+        "median_ms": 242.214,
+        "min_ms": 210.252,
+        "max_ms": 283.093,
+        "parse_ms": 0.04,
+        "plan_ms": 1.236,
+        "catalog_ms": 9.701,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -804,16 +804,16 @@
       },
       "cpu": {
         "runs_ms": [
-          233.303,
-          230.039,
-          200.573
+          252.685,
+          260.409,
+          271.433
         ],
-        "median_ms": 230.039,
-        "min_ms": 200.573,
-        "max_ms": 233.303,
-        "parse_ms": 0.033,
-        "plan_ms": 1.464,
-        "catalog_ms": 8.81,
+        "median_ms": 260.409,
+        "min_ms": 252.685,
+        "max_ms": 271.433,
+        "parse_ms": 0.038,
+        "plan_ms": 1.278,
+        "catalog_ms": 9.313,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -824,13 +824,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          105.100271,
-          101.838671,
-          101.830715
+          120.612515,
+          114.233891,
+          112.942424
         ],
-        "median_ms": 101.838671,
-        "min_ms": 101.830715,
-        "max_ms": 105.100271,
+        "median_ms": 114.233891,
+        "min_ms": 112.942424,
+        "max_ms": 120.612515,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -854,16 +854,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          139.899,
-          125.446,
-          121.311
+          136.934,
+          124.613,
+          119.044
         ],
-        "median_ms": 125.446,
-        "min_ms": 121.311,
-        "max_ms": 139.899,
-        "parse_ms": 0.034,
-        "plan_ms": 1.913,
-        "catalog_ms": 8.143,
+        "median_ms": 124.613,
+        "min_ms": 119.044,
+        "max_ms": 136.934,
+        "parse_ms": 0.039,
+        "plan_ms": 1.213,
+        "catalog_ms": 9.155,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -901,16 +901,16 @@
       },
       "cpu": {
         "runs_ms": [
-          121.315,
-          116.798,
-          116.743
+          138.34,
+          118.858,
+          118.68
         ],
-        "median_ms": 116.798,
-        "min_ms": 116.743,
-        "max_ms": 121.315,
-        "parse_ms": 0.034,
-        "plan_ms": 0.995,
-        "catalog_ms": 7.35,
+        "median_ms": 118.858,
+        "min_ms": 118.68,
+        "max_ms": 138.34,
+        "parse_ms": 0.085,
+        "plan_ms": 1.25,
+        "catalog_ms": 8.38,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -921,13 +921,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          58.771707,
-          56.872136,
-          62.791409
+          64.724812,
+          64.301304,
+          60.584548
         ],
-        "median_ms": 58.771707,
-        "min_ms": 56.872136,
-        "max_ms": 62.791409,
+        "median_ms": 64.301304,
+        "min_ms": 60.584548,
+        "max_ms": 64.724812,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -955,16 +955,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          540.829,
-          528.343,
-          551.679
+          302.748,
+          351.106,
+          306.734
         ],
-        "median_ms": 540.829,
-        "min_ms": 528.343,
-        "max_ms": 551.679,
-        "parse_ms": 0.044,
-        "plan_ms": 1.871,
-        "catalog_ms": 8.953,
+        "median_ms": 306.734,
+        "min_ms": 302.748,
+        "max_ms": 351.106,
+        "parse_ms": 0.041,
+        "plan_ms": 1.541,
+        "catalog_ms": 7.32,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -1006,16 +1006,16 @@
       },
       "cpu": {
         "runs_ms": [
-          553.272,
-          548.121,
-          536.144
+          320.028,
+          304.508,
+          283.907
         ],
-        "median_ms": 548.121,
-        "min_ms": 536.144,
-        "max_ms": 553.272,
-        "parse_ms": 0.039,
-        "plan_ms": 1.572,
-        "catalog_ms": 7.251,
+        "median_ms": 304.508,
+        "min_ms": 283.907,
+        "max_ms": 320.028,
+        "parse_ms": 0.062,
+        "plan_ms": 1.41,
+        "catalog_ms": 8.356,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -1026,13 +1026,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          75.466349,
-          87.218888,
-          73.148567
+          83.274715,
+          76.843118,
+          88.468989
         ],
-        "median_ms": 75.466349,
-        "min_ms": 73.148567,
-        "max_ms": 87.218888,
+        "median_ms": 83.274715,
+        "min_ms": 76.843118,
+        "max_ms": 88.468989,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -1052,16 +1052,16 @@
       ],
       "gpu": {
         "runs_ms": [
-          1.485,
+          1.564,
           0.009,
           0.005
         ],
         "median_ms": 0.009,
         "min_ms": 0.005,
-        "max_ms": 1.485,
-        "parse_ms": 0.026,
-        "plan_ms": 1.352,
-        "catalog_ms": 7.665,
+        "max_ms": 1.564,
+        "parse_ms": 0.034,
+        "plan_ms": 2.686,
+        "catalog_ms": 10.402,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -1095,16 +1095,16 @@
       },
       "cpu": {
         "runs_ms": [
-          2.286,
-          0.014,
-          0.005
+          2.049,
+          0.022,
+          0.008
         ],
-        "median_ms": 0.014,
-        "min_ms": 0.005,
-        "max_ms": 2.286,
-        "parse_ms": 0.042,
-        "plan_ms": 1.776,
-        "catalog_ms": 9.385,
+        "median_ms": 0.022,
+        "min_ms": 0.008,
+        "max_ms": 2.049,
+        "parse_ms": 0.031,
+        "plan_ms": 1.063,
+        "catalog_ms": 9.302,
         "batch_size": 8192,
         "transfer_ms": null,
         "kernel_ms": null,
@@ -1115,13 +1115,13 @@
       },
       "duckdb": {
         "runs_ms": [
-          8.903506,
-          9.526294,
-          9.077164
+          8.224264,
+          9.12845,
+          10.067311
         ],
-        "median_ms": 9.077164,
-        "min_ms": 8.903506,
-        "max_ms": 9.526294,
+        "median_ms": 9.12845,
+        "min_ms": 8.224264,
+        "max_ms": 10.067311,
         "threads": 16
       },
       "gpu_reason": "no-supported-gpu-operator"
@@ -1134,8 +1134,8 @@
     "gpu_available": true,
     "gpu_requested": true,
     "gpu_queries": 2,
-    "gpu_wins": 1,
-    "cpu_wins_over_gpu": 1,
+    "gpu_wins": 0,
+    "cpu_wins_over_gpu": 2,
     "gpu_ties": 0
   }
 }

@@ -368,6 +368,15 @@ uint64_t MixKey(uint64_t value) {
   return value ^ (value >> 31);
 }
 
+// Power-of-two slot capacity that keeps the open-addressed join table at or
+// below a 0.5 load factor for the given row count.
+size_t SlotCapacityFor(int64_t rows) {
+  size_t capacity = 16;
+  while (capacity < static_cast<size_t>(rows) * 2 && capacity < (size_t{1} << 62))
+    capacity <<= 1;
+  return capacity;
+}
+
 } // namespace
 
 std::shared_ptr<arrow::RecordBatch> MakeEmptyBatch(const std::shared_ptr<arrow::Schema>& schema) {
@@ -1786,6 +1795,22 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Build() {
     build_keys_.push_back(std::move(key));
   }
 
+  // A single integer or string key uses the typed tables below. They avoid
+  // building a serialized key string for every probe row; the build side is
+  // materialized once, so the tables never need to grow or migrate.
+  if (conditions_.size() == 1) {
+    const auto& key_type = *build_keys_[0]->type();
+    if (IsIntegerKeyType(key_type)) {
+      key_mode_ = JoinKeyMode::kInteger;
+    } else if (IsStringKeyType(key_type)) {
+      key_mode_ = JoinKeyMode::kString;
+    }
+  }
+  if (key_mode_ != JoinKeyMode::kGeneric) {
+    ARROW_RETURN_NOT_OK(BuildKeyTable());
+    return build_batch_;
+  }
+
   for (int64_t row = 0; row < build_batch_->num_rows(); ++row) {
     std::string key;
     key.reserve(build_keys_.size() * 10);
@@ -1805,30 +1830,153 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::Build() {
   return build_batch_;
 }
 
+arrow::Status JoinOperator::BuildKeyTable() {
+  next_row_.assign(static_cast<size_t>(build_batch_->num_rows()), -1);
+  const size_t capacity = SlotCapacityFor(build_batch_->num_rows());
+  const size_t mask = capacity - 1;
+  const auto& array = *build_keys_[0];
+
+  if (key_mode_ == JoinKeyMode::kInteger) {
+    integer_slots_.assign(capacity, IntegerSlot{});
+    for (int64_t row = 0; row < build_batch_->num_rows(); ++row) {
+      // SQL equality never matches NULL; skip it like the serialized path.
+      if (array.IsNull(row))
+        continue;
+      const uint64_t key = IntegerKeyAt(array, row);
+      size_t index = MixKey(key) & mask;
+      while (integer_slots_[index].used && integer_slots_[index].key != key)
+        index = (index + 1) & mask;
+      IntegerSlot& slot = integer_slots_[index];
+      if (slot.used) {
+        next_row_[static_cast<size_t>(slot.last)] = row;
+        slot.last = row;
+      } else {
+        slot.used = true;
+        slot.key = key;
+        slot.head = row;
+        slot.last = row;
+      }
+    }
+    return arrow::Status::OK();
+  }
+
+  string_slots_.assign(capacity, StringSlot{});
+  for (int64_t row = 0; row < build_batch_->num_rows(); ++row) {
+    if (array.IsNull(row))
+      continue;
+    const std::string_view value = ArrayStringView(array, row);
+    const size_t hash = std::hash<std::string_view>{}(value);
+    size_t index = MixKey(static_cast<uint64_t>(hash)) & mask;
+    while (string_slots_[index].used &&
+           !(string_slots_[index].hash == hash && string_slots_[index].value == value))
+      index = (index + 1) & mask;
+    StringSlot& slot = string_slots_[index];
+    if (slot.used) {
+      next_row_[static_cast<size_t>(slot.last)] = row;
+      slot.last = row;
+    } else {
+      slot.used = true;
+      // The view points into the retained build-key array, which lives as
+      // long as this operator.
+      slot.value = value;
+      slot.hash = hash;
+      slot.head = row;
+      slot.last = row;
+    }
+  }
+  return arrow::Status::OK();
+}
+
+arrow::Status JoinOperator::MatchTyped(const std::shared_ptr<arrow::Array>& probe_key,
+                                       bool preserve_unmatched, int64_t unmatched_build_row,
+                                       arrow::Int64Builder& probe_rows,
+                                       arrow::Int64Builder& build_rows) {
+  const auto& array = *probe_key;
+
+  if (key_mode_ == JoinKeyMode::kInteger) {
+    const bool table_empty = integer_slots_.empty();
+    const size_t mask = table_empty ? 0 : integer_slots_.size() - 1;
+    for (int64_t row = 0; row < array.length(); ++row) {
+      bool found = false;
+      if (!table_empty && !array.IsNull(row)) {
+        const uint64_t key = IntegerKeyAt(array, row);
+        size_t index = MixKey(key) & mask;
+        while (integer_slots_[index].used && integer_slots_[index].key != key)
+          index = (index + 1) & mask;
+        found = integer_slots_[index].used;
+        if (found) {
+          for (int64_t build_row = integer_slots_[index].head; build_row != -1;
+               build_row = next_row_[static_cast<size_t>(build_row)]) {
+            ARROW_RETURN_NOT_OK(probe_rows.Append(row));
+            ARROW_RETURN_NOT_OK(build_rows.Append(build_row));
+          }
+        }
+      }
+      if (!found && preserve_unmatched) {
+        ARROW_RETURN_NOT_OK(probe_rows.Append(row));
+        ARROW_RETURN_NOT_OK(build_rows.Append(unmatched_build_row));
+      }
+    }
+    return arrow::Status::OK();
+  }
+
+  const bool table_empty = string_slots_.empty();
+  const size_t mask = table_empty ? 0 : string_slots_.size() - 1;
+  for (int64_t row = 0; row < array.length(); ++row) {
+    bool found = false;
+    if (!table_empty && !array.IsNull(row)) {
+      const std::string_view value = ArrayStringView(array, row);
+      const size_t hash = std::hash<std::string_view>{}(value);
+      size_t index = MixKey(static_cast<uint64_t>(hash)) & mask;
+      while (string_slots_[index].used &&
+             !(string_slots_[index].hash == hash && string_slots_[index].value == value))
+        index = (index + 1) & mask;
+      found = string_slots_[index].used;
+      if (found) {
+        for (int64_t build_row = string_slots_[index].head; build_row != -1;
+             build_row = next_row_[static_cast<size_t>(build_row)]) {
+          ARROW_RETURN_NOT_OK(probe_rows.Append(row));
+          ARROW_RETURN_NOT_OK(build_rows.Append(build_row));
+        }
+      }
+    }
+    if (!found && preserve_unmatched) {
+      ARROW_RETURN_NOT_OK(probe_rows.Append(row));
+      ARROW_RETURN_NOT_OK(build_rows.Append(unmatched_build_row));
+    }
+  }
+  return arrow::Status::OK();
+}
+
 arrow::Result<std::shared_ptr<arrow::RecordBatch>>
 JoinOperator::Probe(const std::shared_ptr<arrow::RecordBatch>& probe_batch,
                     const std::vector<std::shared_ptr<arrow::Array>>& probe_keys) {
   arrow::Int64Builder probe_indices;
   arrow::Int64Builder build_indices;
-  for (int64_t row = 0; row < probe_batch->num_rows(); ++row) {
-    std::string key;
-    key.reserve(probe_keys.size() * 10);
-    bool has_null = false;
-    for (const auto& array : probe_keys) {
-      if (array->IsNull(row)) {
-        has_null = true;
-        break;
+  if (key_mode_ != JoinKeyMode::kGeneric) {
+    ARROW_RETURN_NOT_OK(MatchTyped(probe_keys[0], /*preserve_unmatched=*/false,
+                                   /*unmatched_build_row=*/-1, probe_indices, build_indices));
+  } else {
+    for (int64_t row = 0; row < probe_batch->num_rows(); ++row) {
+      std::string key;
+      key.reserve(probe_keys.size() * 10);
+      bool has_null = false;
+      for (const auto& array : probe_keys) {
+        if (array->IsNull(row)) {
+          has_null = true;
+          break;
+        }
+        ARROW_RETURN_NOT_OK(AppendArrayKey(*array, row, key));
       }
-      ARROW_RETURN_NOT_OK(AppendArrayKey(*array, row, key));
-    }
-    if (has_null)
-      continue;
-    auto found = hash_.find(key);
-    if (found == hash_.end())
-      continue;
-    for (int64_t build_row : found->second) {
-      ARROW_RETURN_NOT_OK(probe_indices.Append(row));
-      ARROW_RETURN_NOT_OK(build_indices.Append(build_row));
+      if (has_null)
+        continue;
+      auto found = hash_.find(key);
+      if (found == hash_.end())
+        continue;
+      for (int64_t build_row : found->second) {
+        ARROW_RETURN_NOT_OK(probe_indices.Append(row));
+        ARROW_RETURN_NOT_OK(build_indices.Append(build_row));
+      }
     }
   }
   ARROW_ASSIGN_OR_RAISE(auto probe_index_array, probe_indices.Finish());
@@ -1877,26 +2025,31 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> JoinOperator::MaterializeLeft
 
   arrow::Int64Builder left_indices;
   arrow::Int64Builder right_indices;
-  for (int64_t row = 0; row < left_batch->num_rows(); ++row) {
-    std::string key;
-    key.reserve(probe_keys.size() * 10);
-    bool has_null = false;
-    for (const auto& array : probe_keys) {
-      if (array->IsNull(row)) {
-        has_null = true;
-        break;
+  if (key_mode_ != JoinKeyMode::kGeneric) {
+    ARROW_RETURN_NOT_OK(MatchTyped(probe_keys[0], /*preserve_unmatched=*/true,
+                                   build_batch_->num_rows(), left_indices, right_indices));
+  } else {
+    for (int64_t row = 0; row < left_batch->num_rows(); ++row) {
+      std::string key;
+      key.reserve(probe_keys.size() * 10);
+      bool has_null = false;
+      for (const auto& array : probe_keys) {
+        if (array->IsNull(row)) {
+          has_null = true;
+          break;
+        }
+        ARROW_RETURN_NOT_OK(AppendArrayKey(*array, row, key));
       }
-      ARROW_RETURN_NOT_OK(AppendArrayKey(*array, row, key));
-    }
-    const auto found = has_null ? hash_.end() : hash_.find(key);
-    if (found == hash_.end()) {
-      // Unmatched preserved-side row: point at the appended null row.
-      ARROW_RETURN_NOT_OK(left_indices.Append(row));
-      ARROW_RETURN_NOT_OK(right_indices.Append(build_batch_->num_rows()));
-    } else {
-      for (int64_t build_row : found->second) {
+      const auto found = has_null ? hash_.end() : hash_.find(key);
+      if (found == hash_.end()) {
+        // Unmatched preserved-side row: point at the appended null row.
         ARROW_RETURN_NOT_OK(left_indices.Append(row));
-        ARROW_RETURN_NOT_OK(right_indices.Append(build_row));
+        ARROW_RETURN_NOT_OK(right_indices.Append(build_batch_->num_rows()));
+      } else {
+        for (int64_t build_row : found->second) {
+          ARROW_RETURN_NOT_OK(left_indices.Append(row));
+          ARROW_RETURN_NOT_OK(right_indices.Append(build_row));
+        }
       }
     }
   }
