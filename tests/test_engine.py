@@ -214,6 +214,20 @@ CORRECTNESS_QUERIES = [
     "SELECT id FROM edge_cases WHERE id NOT BETWEEN 2 AND 4 ORDER BY id",
     "SELECT id FROM edge_cases WHERE amount BETWEEN 10 AND 100 ORDER BY id",
     "SELECT id FROM edge_cases WHERE id BETWEEN 2 AND 4 AND flag = true ORDER BY id",
+    # LIKE: prefix, infix, single-character wildcard, empty pattern, NOT, and
+    # the pattern as a projected value. All verified against DuckDB, whose LIKE
+    # is case-sensitive like this implementation.
+    "SELECT id FROM edge_cases WHERE label LIKE 'x%' ORDER BY id",
+    "SELECT id, label FROM edge_cases WHERE label LIKE '%b%' ORDER BY id",
+    "SELECT id FROM edge_cases WHERE label LIKE '_' ORDER BY id",
+    "SELECT id FROM edge_cases WHERE label LIKE '' ORDER BY id",
+    "SELECT id FROM edge_cases WHERE label LIKE '%' ORDER BY id",
+    "SELECT id FROM edge_cases WHERE label NOT LIKE 'x%' ORDER BY id",
+    "SELECT id, label LIKE 'x%' AS matches FROM edge_cases ORDER BY id",
+    "SELECT id FROM edge_cases WHERE label LIKE 'O''Brien' ORDER BY id",
+    "SELECT COUNT(*) FROM edge_cases WHERE category LIKE 'a%'",
+    "SELECT id FROM edge_cases WHERE label LIKE '%' AND id > 2 ORDER BY id",
+    "SELECT id FROM edge_cases WHERE label LIKE NULL",
     # OFFSET and top-K edge cases.
     "SELECT id FROM edge_cases ORDER BY id LIMIT 2 OFFSET 2",
     "SELECT id FROM edge_cases ORDER BY id OFFSET 4",
@@ -791,7 +805,9 @@ def test_aggregate_after_join_and_limit(data_dir: Path, conn) -> None:
         ("SELECT SUM(amount) + 1 FROM edge_cases", "combine aggregates"),
         ("SELECT * FROM edge_cases HAVING COUNT(*) > 1", "must appear in GROUP BY"),
         ("SELECT LOWER(label) FROM edge_cases", "unsupported function"),
-        ("SELECT id FROM edge_cases WHERE label LIKE 'x%'", "LIKE"),
+        ("SELECT id FROM edge_cases WHERE label LIKE id", "string literal"),
+        ("SELECT id FROM edge_cases WHERE id LIKE '1'", "string expression"),
+        ("SELECT id FROM edge_cases WHERE label LIKE 'a\\%c'", "backslash"),
         ("SELECT id FROM edge_cases WHERE id BETWEEN 2 AND", "expected"),
         ("SELECT id FROM edge_cases WHERE id IN ()", "IN list"),
         ("SELECT * FROM edge_cases; garbage", "unexpected token"),

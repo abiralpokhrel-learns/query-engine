@@ -204,6 +204,48 @@ arrow::Status CoercePair(arrow::Datum* left, arrow::Datum* right, bool for_divis
   return arrow::Status::OK();
 }
 
+// Arrow 13 exposes a LIKE kernel in libarrow, but not its options type in the
+// public headers, so the pattern is translated into an anchored regex and run
+// through match_substring_regex instead. `%` is "any run", `_` is "one
+// character", and every regex metacharacter is escaped so a pattern can only
+// mean what SQL LIKE means.
+std::string LikePatternToRegex(std::string_view pattern) {
+  std::string regex = "^";
+  regex.reserve(pattern.size() * 2 + 2);
+  for (char c : pattern) {
+    switch (c) {
+    case '%':
+      regex += ".*";
+      break;
+    case '_':
+      regex += '.';
+      break;
+    case '.':
+    case '^':
+    case '$':
+    case '*':
+    case '+':
+    case '?':
+    case '(':
+    case ')':
+    case '[':
+    case ']':
+    case '{':
+    case '}':
+    case '|':
+    case '\\':
+      regex += '\\';
+      regex += c;
+      break;
+    default:
+      regex += c;
+      break;
+    }
+  }
+  regex += '$';
+  return regex;
+}
+
 arrow::Result<arrow::Datum> EvaluateInternal(const sql::Expr& expr,
                                              const arrow::RecordBatch& batch) {
   switch (expr.kind) {
@@ -291,6 +333,39 @@ arrow::Result<arrow::Datum> EvaluateInternal(const sql::Expr& expr,
         break;
       }
       return arrow::compute::CallFunction(function, {left, right});
+    }
+    case sql::BinaryOp::Like: {
+      if (!IsStringType(*left.type())) {
+        return arrow::Status::Invalid("LIKE requires a string expression, got " +
+                                      left.type()->ToString());
+      }
+      // A NULL pattern makes the whole comparison NULL, exactly like any other
+      // comparison with NULL.
+      if (right.type()->id() == arrow::Type::NA) {
+        return arrow::Datum(arrow::MakeNullScalar(arrow::boolean()));
+      }
+      if (!right.is_scalar() || !IsStringType(*right.type())) {
+        return arrow::Status::Invalid(
+            "LIKE requires a string literal pattern; a column or expression pattern is not "
+            "supported");
+      }
+      const auto& pattern_scalar = *right.scalar();
+      std::string pattern;
+      if (pattern_scalar.is_valid) {
+        pattern = arrow::internal::checked_cast<const arrow::StringScalar&>(pattern_scalar)
+                      .value->ToString();
+        // Arrow's match_like treats a backslash as an escape character while
+        // DuckDB's LIKE does not, so a pattern containing one would silently
+        // change meaning between the two engines.
+        if (pattern.find('\\') != std::string::npos) {
+          return arrow::Status::Invalid(
+              "LIKE patterns with backslash escapes are not supported; remove the escape "
+              "character from the pattern");
+        }
+      }
+      ARROW_RETURN_NOT_OK(CoercePair(&left, &right));
+      arrow::compute::MatchSubstringOptions options(LikePatternToRegex(pattern));
+      return arrow::compute::CallFunction("match_substring_regex", {left}, &options);
     }
     case sql::BinaryOp::Add:
     case sql::BinaryOp::Sub:

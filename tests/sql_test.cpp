@@ -152,14 +152,38 @@ void TestInAndBetween() {
   Check(not_between->right->binary_op == qe::sql::BinaryOp::Gt, "NOT BETWEEN above range");
 }
 
+void TestLike() {
+  qe::sql::Parser parser("");
+  auto like = parser.ParseExpressionText("label LIKE 'x%'");
+  Check(like->kind == qe::sql::ExprKind::Binary, "LIKE is binary");
+  Check(like->binary_op == qe::sql::BinaryOp::Like, "LIKE operator");
+  Check(like->left->column == "label", "LIKE left operand");
+  Check(like->right->literal.string == "x%", "LIKE pattern literal");
+
+  auto not_like = parser.ParseExpressionText("label NOT LIKE '%x'");
+  Check(not_like->kind == qe::sql::ExprKind::Unary && not_like->unary_op == qe::sql::UnaryOp::Not,
+        "NOT LIKE wraps LIKE in NOT");
+  Check(not_like->left->binary_op == qe::sql::BinaryOp::Like, "NOT LIKE inner operator");
+
+  // A non-literal pattern still parses; the executor rejects it with a message
+  // that names the requirement, so the failure is not a vague type error.
+  auto column_pattern = parser.ParseExpressionText("label LIKE other");
+  Check(column_pattern->binary_op == qe::sql::BinaryOp::Like, "column pattern parses");
+}
+
+void TestLikeInsidePredicate() {
+  qe::sql::Parser parser("SELECT id FROM t WHERE label LIKE 'a_c' AND id > 2");
+  qe::sql::SelectStmt stmt = parser.Parse();
+  Check(stmt.where->binary_op == qe::sql::BinaryOp::And, "LIKE contained in AND");
+  Check(stmt.where->left->binary_op == qe::sql::BinaryOp::Like, "LIKE conjunct");
+}
+
 void TestRejections() {
   ExpectSqlError("SELECT * FROM t RIGHT JOIN u ON t.id = u.id", "RIGHT JOIN");
   ExpectSqlError("SELECT * FROM t FULL JOIN u ON t.id = u.id", "FULL JOIN");
   ExpectSqlError("SELECT * FROM t CROSS JOIN u", "CROSS JOIN");
   ExpectSqlError("SELECT * FROM t NATURAL JOIN u", "NATURAL JOIN");
   ExpectSqlError("SELECT * FROM t JOIN u USING (id)", "USING");
-  ExpectSqlError("SELECT * FROM t WHERE a LIKE 'x%'", "LIKE");
-  ExpectSqlError("SELECT * FROM t WHERE a NOT LIKE 'x%'", "LIKE");
   ExpectSqlError("SELECT * FROM t ORDER BY a NULLS FIRST", "NULLS");
   ExpectSqlError("SELECT * FROM t UNION SELECT * FROM u", "UNION");
   ExpectSqlError("SELECT SUM(*) FROM t", "only COUNT(*)");
@@ -199,6 +223,8 @@ int main() {
   TestDistinctHavingLimitOffset();
   TestLeftJoin();
   TestInAndBetween();
+  TestLike();
+  TestLikeInsidePredicate();
   TestRejections();
   TestOrderOrdinal();
 
