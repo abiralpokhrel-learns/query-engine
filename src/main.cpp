@@ -21,7 +21,7 @@
 #include "sql/sql.h"
 
 #ifndef QE_VERSION
-#define QE_VERSION "0.2.0"
+#define QE_VERSION "0.3.0"
 #endif
 #ifndef QE_ARROW_VERSION
 #define QE_ARROW_VERSION "unknown"

@@ -17,7 +17,7 @@ engine on the same data and queries as DuckDB, stores every timing, version, and
 dataset detail needed to reproduce the numbers, and renders the published chart
 from that stored data.
 
-**Status: 0.2.0 with an optional CUDA global-aggregate path.** Version 1 is
+**Status: 0.3.0 with an optional CUDA global-aggregate path.** Version 1 is
 complete, and selected version 2 work is now implemented: `DISTINCT`, `HAVING`,
 `LEFT JOIN`, `IN` / `BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort
 for `ORDER BY ... LIMIT`, batch-vectorized hash aggregation, batch-vectorized
@@ -126,7 +126,7 @@ The CLI is self-documenting:
 
 ```text
 $ build/qe-cli --help
-qe-cli 0.2.0 - columnar SQL query engine
+qe-cli 0.3.0 - columnar SQL query engine
 
 Usage:
   qe-cli [options] <file.parquet> [SQL]
@@ -508,7 +508,7 @@ creates them on first run with `scripts/generate_data.py`.
 | CUDA toolkit | 12.9.86 (optional `QE_ENABLE_CUDA` build) |
 | GPU | NVIDIA GeForce RTX 3050 Laptop GPU, 4 GB, compute 8.6, driver 591.84 (WSL2) |
 
-## Known limits (0.2.0)
+## Known limits (0.3.0)
 
 - Read-only, single-process engine. Operators other than the scan are
   single-threaded; the scan decodes row groups in parallel only with opt-in
