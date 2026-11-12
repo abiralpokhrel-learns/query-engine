@@ -16,7 +16,7 @@ coverage-summary.json
 # or let scripts/demo.sh generate it on first run)
 data/*.parquet
 data/manifest.json
-data/bench/
+data/bench*/
 
 # Local planning document
 query-engine-project-brief.docx

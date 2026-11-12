@@ -593,19 +593,61 @@ both queries because it vectorizes and multi-threads the scan and aggregation;
 at this data size the Parquet scan and host-side work dominate. The GPU is not
 claimed to accelerate queries that spend most of their time decoding Parquet.
 
-### 7.4 Remaining GPU work
+### 7.4 Scaling to ten million rows
 
-The next useful steps are broader device coverage, not larger claims:
+The open question was whether the GPU path becomes worthwhile once transfers are
+amortized over more rows. On this device it does not. The same binary
+(`build-cuda/qe-cli`, `qe` 0.3.0) measured one and ten million sales rows in one
+session, three repetitions after one warm-up, with every result verified against
+DuckDB before timing. The artifacts are stored in
+`benchmarks/results/gpu_1m_20261112.json` and
+`benchmarks/results/gpu_10m_20261112.json`.
 
-1. Grouped aggregation and GPU filter kernels, starting with low-cardinality
-   group keys and row-group-sized batches.
-2. A GPU scan/decode path or fused filter to avoid paying host decoding cost
+| Rows | Query | CPU (ms) | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |
+|---|---:|---:|---:|---:|---:|---:|
+| 1M | `filter_aggregate` | 6.10 | 9.10 | 0.326 | 0.288 | 1.49x |
+| 1M | `global_aggregate` | 54.58 | 97.81 | 3.966 | 0.602 | 1.79x |
+| 10M | `filter_aggregate` | 35.56 | 34.29 | 0.532 | 0.256 | 0.96x |
+| 10M | `global_aggregate` | 525.70 | 752.87 | 59.265 | 27.872 | 1.43x |
+
+Three things follow from those numbers.
+
+1. **Transfer is not what limits the path.** At ten million rows the transfer and
+   kernel together are 87.1 ms of a 752.87 ms query. The other 665.7 ms is
+   host-side work, so making the data larger cannot fix the ratio.
+2. **The GPU components do not scale linearly.** Transfer grows 14.9x for 10x the
+   data and the kernel grows 46x. That is per-flush and sustained-load clock
+   behaviour on a laptop GPU rather than bandwidth, and it needs its own
+   measurement before any grouped-kernel work is justified.
+3. **The one GPU win is not a speedup claim.** `filter_aggregate` at ten million
+   rows is 34.29 ms against 35.56 ms on the CPU, and DuckDB does the same query
+   in 28.13 ms. A 1.3 ms difference is reported as a measurement, not a win.
+
+This reorders the remaining GPU work. Grouped aggregation would need a
+GPU-resident hash table *and* the removal of the duplicate host pass, and even
+then the CPU scan in front of it costs more than DuckDB's entire query at this
+size: 525.70 ms of the 752.87 ms GPU `global_aggregate` on the host, against
+161.87 ms for all of DuckDB's work. The honest order is to remove the host pass,
+measure kernel scaling in isolation, and only then consider device-side grouping.
+
+### 7.5 Remaining GPU work
+
+The next useful steps are broader device coverage, not larger claims. Section
+7.4 changes their order: the host-side copy and the kernel's scaling come first,
+because they bound what any wider device path could win.
+
+1. Remove the duplicate host pass: share one buffer between `SUM` and `AVG` over
+   the same argument, and push Arrow buffers to the device instead of copying
+   them into a `std::vector<double>` first.
+2. Measure a kernel-only reduction at several sizes to explain the 46x kernel
+   growth between one and ten million rows.
+3. Grouped aggregation and GPU filter kernels, starting with low-cardinality
+   group keys and row-group-sized batches, after items 1 and 2.
+4. A GPU scan/decode path or fused filter to avoid paying host decoding cost
    before a transfer; without it, global aggregates remain scan-bound.
-3. Async, pinned transfers and overlap with host decoding instead of the current
+5. Async, pinned transfers and overlap with host decoding instead of the current
    chunk-level copy/kernel/copy sequence.
-4. Integer aggregate types, `MIN`/`MAX`, and joins.
-5. A shared buffer for `SUM` and `AVG` over the same argument, which would
-   remove the duplicate host pass visible in `global_aggregate`.
+6. Integer aggregate types, `MIN`/`MAX`, and joins.
 
 Those paths are intentionally not claimed until they can be measured on the
 same verified device.
@@ -635,10 +677,14 @@ Known 0.3.0 limits:
 Version 2 work still open, in priority order:
 
 1. Parallel operators beyond the scan: join build/probe, aggregation, sort,
-   and the executor loop itself.
+   and the executor loop itself. The 0.3.0 scan-thread measurements make this
+   the priority and also pick the target: at four scan threads the three
+   remaining losses are operator-bound (1.32x, 1.32x, 2.68x) and the join is the
+   largest, so parallel aggregation alone would not move the worst case.
 2. CUDA grouped aggregation, filter kernels, and joins, with separate
    transfer/kernel timers and CPU fallback; the global floating-point path is
-   implemented and measured.
+   implemented and measured, and Section 7.4 argues the host-side copy has to
+   go first.
 3. Remaining join types and join-key type coercion.
 4. `LIKE`, set operations, subqueries, CTEs, and window functions.
 5. Aggregate expressions, `DISTINCT` aggregates, and `GROUP BY` expressions.
