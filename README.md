@@ -65,7 +65,7 @@ multi-seed sweeps. Every benchmark query is verified against DuckDB on the
   one Parquet reader per worker and emits batches in the exact serial order,
   bounded by a fixed token budget; results and scan statistics never depend on
   the thread count. In a same-session alternating A/B on the 1M-row dataset it
-  roughly halves the scan-bound `GROUP BY` and top-k queries.
+  ran the scan-bound queries 1.8–2.9x faster.
 - **Performance claims with receipts.** Every benchmark query is verified before
   timing; raw runs, hardware, versions, and query text live in committed JSON,
   and the chart is regenerated from that file. Wins and losses are both reported.
@@ -183,7 +183,7 @@ flowchart LR
   SQL[SQL text] --> Parser[Lexer and recursive-descent parser]
   Parser --> Planner[Planner]
   Planner --> Operators[Vectorized operator pipeline]
-  Catalog[(Parquet catalog)] --> Scan[Scan: pruning, statistics, filters]
+  Catalog[(Parquet catalog)] --> Scan[Scan: pruning, statistics, filters, opt-in parallel decode]
   Planner -->|pushed filters and pruned columns| Scan
   Scan --> Operators
   Operators --> Result[Table or JSON output]
@@ -381,10 +381,16 @@ payload column. Aggregation builds group IDs for a whole batch and updates
 state in one fused pass, and single-key integer/string joins probe an
 open-addressed table instead of serializing a key per row; in an alternating
 same-session A/B against the previous commit (14 rounds, min-vs-min), this
-branch ran the `join_country` query in 300 ms versus 537 ms before. The remaining losses come from
-single-threaded scans, the sort/output path, and multi-key or `NULL`-heavy join
-shapes that still serialize keys; DuckDB runs all of its operators vectorized
-and in parallel. See
+branch ran the `join_country` query in 300 ms versus 537 ms before. The
+remaining losses come from the default serial scan, the sort/output path, and
+multi-key or `NULL`-heavy join shapes that still serialize keys; DuckDB runs
+all of its operators vectorized and in parallel. The opt-in `--threads`
+parallel scan attacks the first of those: in the same-session alternating A/B
+reported in the
+[write-up](docs/engineering-writeup.md#64-parallel-row-group-scan), `--threads
+8` ran the scan-bound queries 1.8–2.9x faster — top-k 2.9x, `GROUP BY region`
+1.95x, the global aggregate 1.8x, the join aggregate 1.2x — while results and
+scan statistics stayed unchanged. See
 the [engineering write-up](docs/engineering-writeup.md) for the analysis and
 for the earlier fix that cut the low-cardinality `GROUP BY` from 5.1 s to
 around 0.25 s. Absolute times drift between benchmark sessions, including for
@@ -404,11 +410,6 @@ honest conclusion is that the current path is roughly tied at best; the scan and
 host buffering dominate. These are measured end-to-end query times, not
 transfer-only or kernel-only speedups; the raw per-run values and separate
 transfer/kernel timings are in
-[`benchmarks/results/latest.json`](benchmarks/results/latest.json) and
-[`benchmarks/results/latest.md`](benchmarks/results/latest.md). Grouped
-aggregates, filters, joins, integer sums, and `MIN`/`MAX` stay on the CPU.
-These are measured end-to-end query times, not transfer-only or kernel-only
-speedups; the raw per-run values and separate transfer/kernel timings are in
 [`benchmarks/results/latest.json`](benchmarks/results/latest.json) and
 [`benchmarks/results/latest.md`](benchmarks/results/latest.md). Grouped
 aggregates, filters, joins, integer sums, and `MIN`/`MAX` stay on the CPU.
