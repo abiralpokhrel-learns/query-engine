@@ -45,6 +45,7 @@ enum class BinaryOp {
   GtEq,
   And,
   Or,
+  Like,
 };
 
 enum class UnaryOp { Negate, Not };

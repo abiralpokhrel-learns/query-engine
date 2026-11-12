@@ -117,6 +117,8 @@ std::string BinaryOpToString(BinaryOp op) {
     return "AND";
   case BinaryOp::Or:
     return "OR";
+  case BinaryOp::Like:
+    return "LIKE";
   }
   return "?";
 }
@@ -711,8 +713,13 @@ ExprPtr Parser::ParseComparison() {
     return MakeBinary(BinaryOp::And, std::move(at_least), std::move(at_most));
   }
 
-  if (Peek().type == TokenType::Keyword && Peek().text == "LIKE") {
-    Error("LIKE is not supported", Peek().position);
+  if (MatchKeyword("LIKE")) {
+    // The pattern is parsed as an additive expression so that a concise error is
+    // raised later if it is not a string literal; `x LIKE 'a%'` is the only shape
+    // with meaningful support, and the executor rejects anything else.
+    ExprPtr pattern = ParseAdditive();
+    auto comparison = MakeBinary(BinaryOp::Like, left, std::move(pattern));
+    return negated ? MakeNot(std::move(comparison)) : comparison;
   }
   if (negated) {
     Error("expected IN, BETWEEN, or LIKE after NOT", Peek().position);

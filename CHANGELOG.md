@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `[NOT] LIKE` with `%` and `_`, verified against DuckDB for prefix, infix,
+  single-character, empty-string, projected-pattern, and `NOT` forms. The pattern
+  must be a string literal, and a pattern containing a backslash is rejected with
+  a clear error because Arrow's kernel treats it as an escape character and
+  DuckDB's LIKE does not.
+
 ## [0.3.0] - 2026-11-12
 
 ### Added
