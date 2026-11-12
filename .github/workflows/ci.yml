@@ -160,9 +160,14 @@ jobs:
       - name: Generate coverage report
         shell: bash -el {0}
         run: |
+          # GCC bug #68080 can emit negative hit counts in gcov data (seen on
+          # the switch in src/engine/expression.cpp), which aborts gcovr before
+          # any report is produced. Warn once per file and keep counting.
           gcovr --root . --filter 'src/' --txt --xml coverage.xml \
-            --json-summary coverage-summary.json --fail-under-line 60
-          gcovr --root . --filter 'src/' --txt-metric branch --txt
+            --json-summary coverage-summary.json --fail-under-line 60 \
+            --gcov-ignore-parse-errors negative_hits.warn_once_per_file
+          gcovr --root . --filter 'src/' --txt-metric branch --txt \
+            --gcov-ignore-parse-errors negative_hits.warn_once_per_file
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
