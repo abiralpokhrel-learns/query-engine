@@ -285,6 +285,16 @@ ParquetSource::OpenReader(const std::vector<int>& row_groups, const std::vector<
   return reader;
 }
 
+arrow::Result<std::unique_ptr<parquet::arrow::FileReader>>
+ParquetSource::OpenIndependentReader() const {
+  ARROW_ASSIGN_OR_RAISE(auto file, arrow::io::ReadableFile::Open(path_));
+  std::unique_ptr<parquet::arrow::FileReader> reader;
+  ARROW_RETURN_NOT_OK(
+      parquet::arrow::OpenFile(std::move(file), arrow::default_memory_pool(), &reader));
+  reader->set_use_threads(false);
+  return reader;
+}
+
 arrow::Result<std::shared_ptr<arrow::RecordBatch>>
 ParquetSource::ReadAll(const std::vector<int>& columns) const {
   std::shared_ptr<arrow::Table> table;

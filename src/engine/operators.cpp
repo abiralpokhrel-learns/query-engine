@@ -1,6 +1,7 @@
 #include "engine/operators.h"
 
 #include <arrow/array/concatenate.h>
+#include <arrow/array/data.h>
 #include <arrow/array/util.h>
 #include <arrow/compute/api.h>
 #include <arrow/table.h>
@@ -8,11 +9,16 @@
 #include <arrow/util/checked_cast.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <limits>
+#include <mutex>
 #include <numeric>
 #include <sstream>
+#include <thread>
 #include <unordered_set>
 
 #include "engine/expression.h"
@@ -33,6 +39,15 @@ constexpr size_t kGpuBufferValues = 1U << 20;
 // 16 MiB, and it is only allocated when the observed key span is small.
 constexpr uint64_t kMaxDenseRange = 1U << 22;
 constexpr size_t kSmallStringGroups = 32;
+
+// Arrow's `PrimitiveArray::raw_values()` already includes the array's slice
+// offset, while the aggregation loops below index values with an explicit
+// `offset + row` — the same offset they must add to walk the validity bitmap.
+// Resolve offset-exclusive pointers to the values buffer instead, so slices of
+// a batch (which a scan or Limit can produce) read the correct elements.
+template <typename T> const T* OffsetExclusiveValues(const arrow::Array& array) {
+  return array.data()->GetValues<T>(1, /*absolute_offset=*/0);
+}
 
 std::shared_ptr<arrow::RecordBatch>
 MakeEmptyBatchImpl(const std::shared_ptr<arrow::Schema>& schema) {
@@ -385,15 +400,54 @@ std::shared_ptr<arrow::RecordBatch> MakeEmptyBatch(const std::shared_ptr<arrow::
 
 // ---------------------------------------------------------------------------
 // Scan
+//
+// With --threads > 1 the scan decodes row groups concurrently. Rows are still
+// pulled in exactly the order the serial scan produces: worker w owns the row
+// groups at positions w, w+workers, ... and only fully decoded row groups may
+// buffer ahead, bounded by a fixed token budget. Because every batch
+// downstream sees arrives in the serial order, COUNT/SUM/AVG accumulation and
+// sort results are bit-identical to the single-threaded scan.
+// ---------------------------------------------------------------------------
+
+// Parallel-scan coordinator. One "unit" is one row group; a fully decoded and
+// filtered unit may be returned to the caller batch by batch. Units are
+// decoded concurrently but consumed strictly in row-group order, which is the
+// order the serial RecordBatchReader would have produced.
+struct ScanOperator::Prefetch {
+  // Decoded, filtered batches for one row group, in that row group's order.
+  struct Unit {
+    std::deque<std::shared_ptr<arrow::RecordBatch>> batches;
+    bool ready = false; // producer finished decoding this row group
+  };
+
+  explicit Prefetch(const std::vector<int>& row_groups, int workers)
+      : units(row_groups.size()), worker_count(workers), tokens(2 * workers) {}
+
+  std::mutex mu;
+  std::condition_variable cv;
+  std::vector<Unit> units;
+  size_t next_unit = 0; // row-group unit the consumer expects next
+  int worker_count = 0;
+  int tokens = 0;
+  arrow::Status error;
+  bool shutting_down = false;
+  std::vector<std::thread> threads;
+  std::atomic<int64_t> batches{0};
+  std::atomic<int64_t> rows{0};
+  std::atomic<int64_t> rows_after{0};
+};
+
+// ---------------------------------------------------------------------------
+// ScanOperator birth/teardown
 // ---------------------------------------------------------------------------
 
 ScanOperator::ScanOperator(std::shared_ptr<ParquetSource> source,
                            std::vector<std::string> file_columns,
                            std::vector<std::string> output_names, std::vector<sql::ExprPtr> filters,
-                           int64_t batch_size, std::shared_ptr<ExecutionStats> stats)
+                           int64_t batch_size, std::shared_ptr<ExecutionStats> stats, int threads)
     : source_(std::move(source)), file_columns_(std::move(file_columns)),
       output_names_(std::move(output_names)), filters_(std::move(filters)), batch_size_(batch_size),
-      stats_(std::move(stats)) {
+      threads_(threads < 1 ? 1 : threads), stats_(std::move(stats)) {
   if (file_columns_.size() != output_names_.size()) {
     init_status_ = arrow::Status::Invalid("scan column/name count mismatch");
     return;
@@ -446,8 +500,177 @@ arrow::Status ScanOperator::Initialize() {
     stats_->rows_from_metadata += metadata_rows_;
     return arrow::Status::OK();
   }
+
+  // Parallel scans need at least two row groups and two workers to help; keep
+  // the worker count within the machine to leave one logical CPU for the
+  // downstream operators.
+  int workers = threads_;
+  const int hardware = static_cast<int>(std::thread::hardware_concurrency());
+  if (hardware > 1 && workers > hardware - 1)
+    workers = hardware - 1;
+  if (workers > static_cast<int>(row_groups_.size()))
+    workers = static_cast<int>(row_groups_.size());
+  if (workers >= 2 && row_groups_.size() >= 2) {
+    prefetch_ = std::make_unique<Prefetch>(row_groups_, workers);
+    ARROW_RETURN_NOT_OK(StartWorkers());
+    return arrow::Status::OK();
+  }
+
   ARROW_ASSIGN_OR_RAISE(reader_, source_->OpenReader(row_groups_, column_indices_, batch_size_));
   return arrow::Status::OK();
+}
+
+ScanOperator::~ScanOperator() {
+  if (!prefetch_)
+    return;
+  {
+    std::lock_guard<std::mutex> guard(prefetch_->mu);
+    prefetch_->shutting_down = true;
+    prefetch_->cv.notify_all();
+  }
+  for (auto& worker : prefetch_->threads)
+    worker.join();
+}
+
+arrow::Status ScanOperator::StartWorkers() {
+  // The worker lambda captures its bounds by value: the vectors must be copied
+  // per worker because a moved-out local would be empty for the next worker,
+  // and references would dangle once StartWorkers returns.
+  Prefetch* state = prefetch_.get();
+  const std::shared_ptr<arrow::Schema> schema = schema_;
+
+  for (int w = 0; w < prefetch_->worker_count; ++w) {
+    // One independent Parquet reader per worker: parquet::arrow::FileReader
+    // must not be used concurrently, so each worker opens its own handle and
+    // reuses it for every row group it is assigned.
+    auto worker_reader_result = source_->OpenIndependentReader();
+    if (!worker_reader_result.ok())
+      return worker_reader_result.status();
+    auto worker_reader = std::move(worker_reader_result).ValueOrDie();
+    prefetch_->threads.emplace_back([state, schema, worker_reader = std::move(worker_reader),
+                                     row_groups = row_groups_, columns = column_indices_,
+                                     batch_size = batch_size_, filters = filters_, w]() {
+      auto fail = [state](arrow::Status status) {
+        std::lock_guard<std::mutex> guard(state->mu);
+        state->error = std::move(status);
+        state->cv.notify_all();
+      };
+
+      const int workers = state->worker_count;
+      const int units = static_cast<int>(state->units.size());
+      for (int ordinal = w; ordinal < units; ordinal += workers) {
+        {
+          // One token per decoded-but-not-yet-consumed row group bounds
+          // the peak memory of the pipeline. Workers also stop promptly on
+          // a peer's error instead of filling memory behind it.
+          std::unique_lock<std::mutex> guard(state->mu);
+          state->cv.wait(guard, [state] {
+            return state->tokens > 0 || state->shutting_down || !state->error.ok();
+          });
+          if (state->shutting_down || !state->error.ok())
+            return;
+          --state->tokens;
+        }
+
+        std::shared_ptr<arrow::Table> table;
+        if (auto status = worker_reader->ReadRowGroups({row_groups[static_cast<size_t>(ordinal)]},
+                                                       columns, &table);
+            !status.ok()) {
+          fail(std::move(status));
+          return;
+        }
+        auto combined = table->CombineChunksToBatch();
+        if (!combined.ok()) {
+          fail(combined.status());
+          return;
+        }
+        auto full = std::move(combined).ValueOrDie();
+
+        // Slice and filter inside the worker, exactly as the serial scan
+        // would do for this row group, so the emitted batch sequence is
+        // identical. An empty filtered slice just moves on to the next
+        // slice, like the serial loop.
+        Prefetch::Unit decoded;
+        for (int64_t offset = 0; offset < full->num_rows(); offset += batch_size) {
+          auto slice = full->Slice(offset, batch_size);
+          auto renamed = arrow::RecordBatch::Make(schema, slice->num_rows(), slice->columns());
+          state->batches.fetch_add(1, std::memory_order_relaxed);
+          state->rows.fetch_add(renamed->num_rows(), std::memory_order_relaxed);
+          for (const auto& filter : filters) {
+            auto filtered = ApplyFilter(*renamed, *filter);
+            if (!filtered.ok()) {
+              fail(filtered.status());
+              return;
+            }
+            renamed = std::move(filtered).ValueOrDie();
+            if (renamed->num_rows() == 0)
+              break;
+          }
+          state->rows_after.fetch_add(renamed->num_rows(), std::memory_order_relaxed);
+          if (renamed->num_rows() > 0)
+            decoded.batches.push_back(std::move(renamed));
+        }
+
+        {
+          std::lock_guard<std::mutex> guard(state->mu);
+          decoded.ready = true;
+          state->units[static_cast<size_t>(ordinal)] = std::move(decoded);
+          state->cv.notify_all();
+        }
+      }
+    });
+  }
+  return arrow::Status::OK();
+}
+
+arrow::Result<std::shared_ptr<arrow::RecordBatch>> ScanOperator::NextParallel() {
+  Prefetch* state = prefetch_.get();
+  // Workers only touch these atomics; stats_ is written from the pulling
+  // thread alone, exactly like the serial scan. Merging on every pull keeps
+  // the printed stats correct even when a downstream Limit stops pulling
+  // before the scan is exhausted.
+  auto flush_counters = [&]() {
+    stats_->batches_scanned += state->batches.exchange(0, std::memory_order_relaxed);
+    stats_->rows_scanned += state->rows.exchange(0, std::memory_order_relaxed);
+    stats_->rows_after_pushdown += state->rows_after.exchange(0, std::memory_order_relaxed);
+  };
+
+  while (true) {
+    std::shared_ptr<arrow::RecordBatch> batch;
+    {
+      std::unique_lock<std::mutex> guard(state->mu);
+      state->cv.wait(guard, [&] {
+        return state->shutting_down || !state->error.ok() ||
+               state->next_unit >= state->units.size() || state->units[state->next_unit].ready;
+      });
+      if (!state->error.ok()) {
+        flush_counters();
+        return state->error;
+      }
+      if (state->next_unit >= state->units.size()) {
+        // Every row group has been consumed; workers are idle or done.
+        flush_counters();
+        done_ = true;
+        return nullptr;
+      }
+      Prefetch::Unit& unit = state->units[state->next_unit];
+      if (!unit.batches.empty()) {
+        batch = std::move(unit.batches.front());
+        unit.batches.pop_front();
+      }
+      if (unit.batches.empty()) {
+        // Either fully consumed or a zero-row row group: both advance the
+        // expected unit and free one backpressure token.
+        state->next_unit += 1;
+        state->tokens += 1;
+        state->cv.notify_all();
+      }
+    }
+    flush_counters();
+    if (batch)
+      return batch;
+    // A zero-row row group advanced to the next unit; keep waiting.
+  }
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> ScanOperator::Next() {
@@ -467,6 +690,9 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> ScanOperator::Next() {
     return arrow::RecordBatch::Make(schema_, metadata_rows_,
                                     std::vector<std::shared_ptr<arrow::Array>>{});
   }
+
+  if (prefetch_)
+    return NextParallel();
 
   while (true) {
     ARROW_ASSIGN_OR_RAISE(auto batch, reader_->Next());
@@ -1027,7 +1253,7 @@ arrow::Status AggregateOperator::AccumulateBatch(
         }
         const auto& values = checked_cast<const arrow::DoubleArray&>(*numeric);
         view.kind = aggregate.function == "min" ? FastKind::kMinDouble : FastKind::kMaxDouble;
-        view.doubles = values.raw_values();
+        view.doubles = OffsetExclusiveValues<double>(values);
         view.bitmap = values.null_bitmap_data();
         view.offset = values.offset();
         continue;
@@ -1045,7 +1271,7 @@ arrow::Status AggregateOperator::AccumulateBatch(
         }
         const auto& values = checked_cast<const arrow::DoubleArray&>(*numeric);
         view.kind = aggregate.function == "avg" ? FastKind::kAvg : FastKind::kSumDouble;
-        view.doubles = values.raw_values();
+        view.doubles = OffsetExclusiveValues<double>(values);
         view.bitmap = values.null_bitmap_data();
         view.offset = values.offset();
       } else {
@@ -1057,7 +1283,7 @@ arrow::Status AggregateOperator::AccumulateBatch(
         }
         const auto& values = checked_cast<const arrow::Int64Array&>(*numeric);
         view.kind = FastKind::kSumInt;
-        view.ints = values.raw_values();
+        view.ints = OffsetExclusiveValues<int64_t>(values);
         view.bitmap = values.null_bitmap_data();
         view.offset = values.offset();
       }
@@ -1156,7 +1382,7 @@ arrow::Status AggregateOperator::AccumulateBatch(
           numeric = casted;
         }
         const auto& values = checked_cast<const arrow::DoubleArray&>(*numeric);
-        const double* data = values.raw_values();
+        const double* data = OffsetExclusiveValues<double>(values);
         const uint8_t* bitmap = values.null_bitmap_data();
         const int64_t offset = values.offset();
         if (bitmap == nullptr) {
@@ -1185,7 +1411,7 @@ arrow::Status AggregateOperator::AccumulateBatch(
           numeric = casted;
         }
         const auto& values = checked_cast<const arrow::Int64Array&>(*numeric);
-        const int64_t* data = values.raw_values();
+        const int64_t* data = OffsetExclusiveValues<int64_t>(values);
         const uint8_t* bitmap = values.null_bitmap_data();
         const int64_t offset = values.offset();
         if (bitmap == nullptr) {
@@ -1231,7 +1457,7 @@ arrow::Status AggregateOperator::AccumulateBatch(
           dates[static_cast<size_t>(row)] = date_values.Value(row);
         data = dates.data();
       } else {
-        data = checked_cast<const arrow::Int64Array&>(*numeric).raw_values();
+        data = OffsetExclusiveValues<int64_t>(checked_cast<const arrow::Int64Array&>(*numeric));
       }
       if (bitmap == nullptr) {
         for (int64_t row = 0; row < num_rows; ++row) {
@@ -1268,7 +1494,7 @@ arrow::Status AggregateOperator::AccumulateBatch(
         numeric = casted;
       }
       const auto& values = checked_cast<const arrow::DoubleArray&>(*numeric);
-      const double* data = values.raw_values();
+      const double* data = OffsetExclusiveValues<double>(values);
       const uint8_t* bitmap = values.null_bitmap_data();
       const int64_t offset = values.offset();
       if (bitmap == nullptr) {

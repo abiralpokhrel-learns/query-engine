@@ -21,7 +21,7 @@ BuildOperator(const std::shared_ptr<LogicalPlan>& plan, const ExecutionOptions& 
     }
     return std::make_unique<ScanOperator>(std::move(source), plan->scan_columns,
                                           std::move(output_names), plan->pushed_filters,
-                                          options.batch_size, stats);
+                                          options.batch_size, stats, options.threads);
   }
   case LogicalPlan::Kind::Filter: {
     ARROW_ASSIGN_OR_RAISE(auto child, BuildOperator(plan->children[0], options, stats));

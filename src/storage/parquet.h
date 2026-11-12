@@ -53,6 +53,12 @@ public:
   OpenReader(const std::vector<int>& row_groups, const std::vector<int>& columns,
              int64_t batch_size);
 
+  // Opens an independent parquet::arrow::FileReader over the same file for use
+  // by one worker thread of a parallel scan. The shared reader_ is untouched;
+  // each independent reader opens its own file handle and parses the footer
+  // once, which is far cheaper than one reader per row group.
+  arrow::Result<std::unique_ptr<parquet::arrow::FileReader>> OpenIndependentReader() const;
+
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> ReadAll(const std::vector<int>& columns) const;
 
 private:

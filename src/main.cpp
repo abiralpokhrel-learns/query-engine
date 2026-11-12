@@ -45,6 +45,7 @@ struct Options {
   bool max_rows_set = false;
   bool explain = false;
   int repeat = 1;
+  int threads = 1;
   bool show_stats = true;
   bool use_gpu = false;
 };
@@ -124,6 +125,8 @@ void PrintUsage(std::ostream& out) {
       << "  --max-rows N          Maximum result rows to display; -1 shows all.\n"
       << "                        Defaults to 50 for tables and all for JSON.\n"
       << "  --batch-size N        Vectorized batch size (default: 8192).\n"
+      << "  --threads N           Parallel scan workers for row-group decoding\n"
+      << "                        (default: 1). Results never depend on this.\n"
       << "  --explain             Print the optimized plan and do not execute.\n"
       << "  --repeat N            Execute the query N times and report the last result.\n"
       << "  --gpu                 Use the optional CUDA global-aggregate path where\n"
@@ -216,6 +219,16 @@ Options ParseOptions(int argc, char** argv) {
                                     ? require_value(i, "--batch-size")
                                     : arg.substr(std::string("--batch-size=").size());
       options.batch_size = ParseInteger(value, "--batch-size");
+      continue;
+    }
+    if (arg == "--threads" || arg.rfind("--threads=", 0) == 0) {
+      const std::string value = arg == "--threads" ? require_value(i, "--threads")
+                                                   : arg.substr(std::string("--threads=").size());
+      const int64_t threads = ParseInteger(value, "--threads");
+      if (threads < 1 || threads > 1024) {
+        throw UsageError("--threads must be between 1 and 1024");
+      }
+      options.threads = static_cast<int>(threads);
       continue;
     }
     if (arg == "--max-rows" || arg.rfind("--max-rows=", 0) == 0) {
@@ -374,6 +387,7 @@ int Run(int argc, char** argv) {
   qe::ExecutionOptions execution_options;
   execution_options.batch_size = options.batch_size;
   execution_options.use_gpu = options.use_gpu;
+  execution_options.threads = options.threads;
   if (options.use_gpu) {
     const qe::gpu::DeviceInfo device = qe::gpu::QueryDevice();
     if (!device.build_enabled) {
