@@ -235,31 +235,43 @@ a reviewer can inspect the numbers rather than trusting a summary.
 
 ## 5. Results
 
-Latest run: 1,000,000 sales rows, 16 row groups, 22.5 MB, batch 8,192, AMD
-Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04, NVIDIA
-GeForce RTX 3050 Laptop GPU (4 GB, compute 8.6). The table below is CPU vs
-DuckDB; the GPU runs are in Section 7.3.
+Latest run: 2026-11-12, 1,000,000 sales rows, 16 row groups, 22.5 MB, batch
+8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04,
+CPU-only build. Five timed repetitions after two warm-ups at each scan thread
+count; DuckDB uses its default 16 threads. Every thread count is verified
+against DuckDB before timing. The GPU runs are in Section 7.3 and come from the
+2026-11-09 run, because this one has no CUDA build.
 
-| Query | qe CPU (ms) | DuckDB (ms) | Ratio | Winner |
-|---|---:|---:|---:|---|
-| filter_aggregate | 7.18 | 21.79 | 0.33x | qe |
-| global_aggregate | 63.49 | 47.34 | 1.34x | DuckDB |
-| empty_filter | 0.39 | 10.09 | 0.04x | qe |
-| group_region | 125.89 | 45.91 | 2.74x | DuckDB |
-| group_customer | 260.41 | 114.23 | 2.28x | DuckDB |
-| topk | 118.86 | 64.30 | 1.85x | DuckDB |
-| join_country | 304.51 | 83.27 | 3.66x | DuckDB |
-| count_star | 0.02 | 9.13 | 0.00x | qe |
+| Query | qe 1 thread | qe 4 threads | qe 8 threads | DuckDB | 1-thread ratio | 8-thread ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| filter_aggregate | 4.76 | 5.15 | 4.54 | 19.90 | 0.24x | 0.23x |
+| global_aggregate | 52.27 | 26.61 | 29.64 | 33.58 | 1.56x | 0.88x |
+| empty_filter | 0.09 | 0.07 | 0.11 | 9.40 | 0.01x | 0.01x |
+| group_region | 116.50 | 54.78 | 63.42 | 41.56 | 2.80x | 1.53x |
+| group_customer | 202.56 | 137.65 | 138.89 | 104.21 | 1.94x | 1.33x |
+| topk | 119.14 | 53.38 | 58.54 | 61.41 | 1.94x | 0.95x |
+| join_country | 297.83 | 203.53 | 204.69 | 75.87 | 3.93x | 2.70x |
+| count_star | 0.01 | 0.01 | 0.01 | 7.25 | 0.00x | 0.00x |
 
-These numbers are medians from the committed `latest.json` run. The engine is
-single-threaded while DuckDB uses 16 threads. Absolute times drift between
-sessions: most untouched scan-bound queries and DuckDB itself moved by roughly
-20-40% between the previous commit and this run, and the sub-10 ms filter query
-moved further. Cross-session timings are therefore reported as context, not
-used alone to attribute the aggregation and join changes; the alternating A/B
-runs in Sections 6.2 and 6.3 are the attribution measurements.
+Wins against DuckDB: 3/8 at one thread, 5/8 at four, 5/8 at eight. The parallel
+scan is what moves the story: `global_aggregate` and `topk` cross below 1.0x
+once decode overlaps the single-threaded operator behind it, and the three
+remaining losses are operator-bound rather than scan-bound.
 
-### Why the engine wins three queries
+Four threads matched or beat eight on every scan-bound query. That is the
+expected shape for this dataset: 16 row groups distributed across `N` workers
+leaves two units per worker at eight threads and four at four, while the
+consumer stays serial, so the fifth through eighth readers mostly add memory
+residency and core contention. The scaling limit is the operator pipeline, not
+the decoder, which is the argument for the parallel-operator work in Section 8.
+
+Absolute times drift between sessions: every query here moved against the
+previous committed run, including DuckDB itself, which is why cross-session
+ratios are context rather than attribution. The alternating A/B runs in
+Sections 6.2, 6.3, and 6.4 remain the attribution measurements for the
+individual optimizations.
+
+### Why the engine wins five queries at four threads
 
 Two wins are selective scans. `empty_filter` asks for a date range after the
 end of the data; Parquet statistics prove that no row group can match, so almost
@@ -267,37 +279,39 @@ nothing is read. `filter_aggregate` reads a one-month slice and aggregates it.
 The engine's scan path has very little per-query overhead, while DuckDB still
 pays for its optimizer and execution framework.
 
+Two more are scan-parallel wins rather than operator wins. `topk` (0.87x) and
+`global_aggregate` (0.79x) at four threads each spend most of their single
+threaded time waiting on Parquet decode; overlapping that decode with the sort
+or aggregate behind it is enough to pass DuckDB even though DuckDB's operators
+are vectorized and parallel. This is a statement about this dataset and this
+machine, not about the operators: neither query's operator code changed.
+
 The third win is metadata-only `COUNT(*)`. Both engines avoid decoding the
 table, but the engine's total is a few row-group metadata lookups and a
 zero-column count batch, so `execute_ms` rounds to 0.01 ms. That number measures
 low query overhead rather than scan throughput; it is reported because it is
 real, not because it generalizes.
 
-### Why the engine loses five queries
+### Why the engine still loses three queries
 
-- **`global_aggregate`**: the CPU query now uses the fused batch accumulation
-  described in Section 6.2, but it still scans and aggregates on one thread.
-  DuckDB's vectorized, multi-threaded aggregate is about 1.5x faster. The
-  optional GPU path is compared in Section 7.3; it does not beat DuckDB or
-  reliably beat the CPU.
 - **`group_region` / `group_customer`**: group IDs are built for the whole
-  batch and the aggregates are updated in a fused pass, but the scan and
-  grouping remain single-threaded and the result is materialized and sorted on
-  one thread. DuckDB uses vectorized, multi-threaded hash aggregation. The
-  engine is roughly 2.3-3.1x slower in the committed run.
-- **`join_country`**: the join probe is batch-vectorized for single integer and
-  string keys, but the scan, output materialization, and the following aggregate
-  all still run on one thread, and DuckDB's join pipeline is vectorized and
-  parallel. The gap is 3.7x in the committed run, down from 7.3x before this
-  change (attribution in Section 6.3).
-- **`topk`**: the engine now partitions to the top K before sorting, but it still
-  scans and filters every batch with one thread and hashes no work away. DuckDB
-  combines a parallel scan with its own top-k path; the gap is about 2.0x.
+  batch and the aggregates are updated in a fused pass, but grouping, result
+  materialization, and the final sort all remain single-threaded. At four scan
+  threads the gaps are 1.32x and 1.32x; at eight they are 1.53x and 1.33x. The
+  scan is no longer the explanation, so further progress needs a parallel
+  operator rather than more decode concurrency.
+- **`join_country`**: the probe is batch-vectorized for single integer and
+  string keys, but the probe loop, the per-column `Take` that materializes
+  joined rows, and the following aggregate all run on one thread, while DuckDB's
+  join pipeline is vectorized and parallel. The gap is 2.68x at four threads and
+  2.70x at eight, down from 7.3x before the typed table and probe landed
+  (attribution in Section 6.3). It is the largest remaining loss.
 
-The honest conclusion is the one in the brief: a student-built engine should
-not be expected to beat a mature vectorized engine overall. The value is in the
-three cases where the design choices pay off, and in being able to explain the
-five cases where they do not.
+The honest conclusion is the one in the brief: an engine with a parallel scan
+in front of a single-threaded operator pipeline should not be expected to beat
+a mature vectorized engine overall. The value is in the five cases where the
+design choices pay off, and in being able to explain the three cases where they
+do not.
 
 ## 6. A performance bug found by the benchmark
 
@@ -501,8 +515,10 @@ from the ext4 home directory rather than `/mnt/c`) measured:
 Medians tell the same story (2.7x, 2.1x, 1.7x, 1.1x). The scan-bound queries
 gain most because decode overlaps with the single-threaded aggregate and sort;
 the join query gains least because its serial hash probe and key serialization
-dominate. The committed benchmark JSON still describes the default
-single-threaded scan and was not regenerated.
+dominate. The committed benchmark JSON now records this scaling directly:
+`--scan-threads 1,4,8` times the same verified queries at each worker count, so
+Section 5's table is produced by the harness rather than by comparing the A/B
+run against the default build.
 
 ## 7. GPU status and design
 

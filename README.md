@@ -62,8 +62,10 @@ results are in [`benchmarks/results/latest.md`](benchmarks/results/latest.md).
 - **Opt-in parallel scan.** `--threads N` decodes row groups concurrently with
   one Parquet reader per worker and emits batches in the exact serial order,
   bounded by a fixed token budget; results and scan statistics never depend on
-  the thread count. In a same-session alternating A/B on the 1M-row dataset it
-  ran the scan-bound queries 1.8–2.9x faster.
+  the thread count. In the committed run, four scan threads cut `topk` from
+  119.14 ms to 53.38 ms (2.2x), `GROUP BY region` from 116.50 ms to 54.78 ms
+  (2.1x), the global aggregate from 52.27 ms to 26.61 ms (2.0x), and the join
+  aggregate from 297.83 ms to 203.53 ms (1.5x).
 - **Performance claims with receipts.** Every benchmark query is verified before
   timing; raw runs, hardware, versions, and query text live in committed JSON,
   and the chart is regenerated from that file. Wins and losses are both reported.
@@ -354,14 +356,21 @@ QE_CLI=build-cuda/qe-cli python scripts/run_benchmarks.py \
 
 ### Latest results
 
-Latest run: 1,000,000 sales rows, 16 row groups, 22.5 MB Parquet, batch size
-8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04,
-NVIDIA GeForce RTX 3050 Laptop GPU (4 GB, compute 8.6, CUDA 12.9.86). DuckDB
-used its default 16 threads; the engine ran with its default single-threaded
-scan (opt-in `--threads` parallel decoding is not part of the committed run).
-The GPU run used three timed repetitions after one warm-up; `--gpu` also runs
-a device self-test before timing so CUDA module loading is not charged to the
-first query.
+Latest run: 2026-11-12, 1,000,000 sales rows, 16 row groups, 22.5 MB Parquet,
+batch size 8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2,
+Ubuntu 24.04. CPU-only build; five timed repetitions after two warm-ups at each
+scan thread count, and DuckDB used its default 16 threads. Every thread count
+is verified against DuckDB before it is timed, so a faster row cannot come from
+a different result.
+
+This run *is* the committed run: `run_benchmarks.py --scan-threads 1,4,8`
+records the opt-in parallel scan alongside the single-threaded baseline, so the
+table no longer describes an engine that is single-threaded at every point. It
+used the default CPU-only build, so no GPU column is shown here; the optional
+CUDA path is measured and reported separately in
+[Section 7.3 of the write-up](docs/engineering-writeup.md#73-measured-result),
+where `--gpu` runs a device self-test before timing so CUDA module loading is
+not charged to the first query.
 
 <p align="center">
   <img src="benchmarks/charts/latest.png" alt="Benchmark chart comparing qe CPU, qe GPU, and DuckDB median wall time for eight queries, plus a relative-speed panel." width="100%">
@@ -369,16 +378,27 @@ first query.
 
 <p align="center"><sub>Chart generated from <code>benchmarks/results/latest.json</code> with <code>scripts/plot_benchmarks.py</code>. GPU bars are end-to-end medians and appear only for queries that actually ran a verified CUDA reduction.</sub></p>
 
-| Query | qe CPU (ms) | qe GPU (ms) | DuckDB (ms) | CPU / DuckDB | GPU / CPU | GPU path |
-|---|---:|---:|---:|---:|---:|---|
-| filter_aggregate | 7.18 | 10.11 | 21.79 | 0.33x | 1.41x | CUDA |
-| global_aggregate | 63.49 | 80.57 | 47.34 | 1.34x | 1.27x | CUDA |
-| empty_filter | 0.39 | - | 10.09 | 0.04x | - | CPU fallback |
-| group_region | 125.89 | - | 45.91 | 2.74x | - | CPU fallback |
-| group_customer | 260.41 | - | 114.23 | 2.28x | - | CPU fallback |
-| topk | 118.86 | - | 64.30 | 1.85x | - | CPU fallback |
-| join_country | 304.51 | - | 83.27 | 3.66x | - | CPU fallback |
-| count_star | 0.02 | - | 9.13 | 0.00x | - | CPU fallback |
+| Query | qe 1 thread (ms) | qe 4 threads (ms) | qe 8 threads (ms) | DuckDB (ms) | 1-thread ratio | 8-thread ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| filter_aggregate | 4.76 | 5.15 | 4.54 | 19.90 | 0.24x | 0.23x |
+| global_aggregate | 52.27 | 26.61 | 29.64 | 33.58 | 1.56x | 0.88x |
+| empty_filter | 0.09 | 0.07 | 0.11 | 9.40 | 0.01x | 0.01x |
+| group_region | 116.50 | 54.78 | 63.42 | 41.56 | 2.80x | 1.53x |
+| group_customer | 202.56 | 137.65 | 138.89 | 104.21 | 1.94x | 1.33x |
+| topk | 119.14 | 53.38 | 58.54 | 61.41 | 1.94x | 0.95x |
+| join_country | 297.83 | 203.53 | 204.69 | 75.87 | 3.93x | 2.70x |
+| count_star | 0.01 | 0.01 | 0.01 | 7.25 | 0.00x | 0.00x |
+
+Wins against DuckDB by scan thread count: **3/8** at one thread, **5/8** at
+four, and **5/8** at eight. Four threads matched or beat eight on every
+scan-bound query, which is what 16 row groups and one serial consumer would
+predict: past four workers there is nothing left to overlap, and the extra
+readers only compete for memory and cores. The remaining losses are
+therefore operator-bound, not scan-bound.
+
+The GPU runs are a separate measurement from a different date and a different
+binary, so they are never folded into the CPU ratios above. They stay in the
+write-up rather than in this table.
 
 ### Reading the results
 
@@ -390,23 +410,25 @@ payload column is decoded. Aggregation builds group IDs for a whole batch and
 updates state in one fused pass, and single-key integer/string joins probe an
 open-addressed table instead of serializing a key per row; in an alternating
 same-session A/B against the previous commit (14 rounds, min-vs-min), this
-branch ran the `join_country` query in 300 ms versus 537 ms before.
+branch ran the `join_country` query in 300 ms versus 537 ms before. With four
+or more scan threads the global aggregate and `topk` cross over as well, at
+0.79x and 0.87x of DuckDB. The switch does not come from a faster operator:
+it comes from overlapping Parquet decode with the single-threaded aggregate
+and sort behind it, which is exactly what the scan-thread table measures.
 
-**Where qe still loses.** The remaining losses come from the default serial
-scan, the sort/output path, and multi-key or `NULL`-heavy join shapes that
-still serialize keys; DuckDB runs all of its operators vectorized and in
-parallel. The opt-in `--threads` parallel scan attacks the first of those: in
-the same-session alternating A/B reported in the
-[write-up](docs/engineering-writeup.md#64-parallel-row-group-scan),
-`--threads 8` ran the scan-bound queries 1.8–2.9x faster — top-k 2.9x,
-`GROUP BY region` 1.95x, the global aggregate 1.8x, the join aggregate 1.2x —
-while results and scan statistics stayed unchanged. See the
-[engineering write-up](docs/engineering-writeup.md) for the analysis and for
-the earlier fix that cut the low-cardinality `GROUP BY` from 5.1 s to around
-0.25 s. Absolute times drift between benchmark sessions, including for queries
-where the sort or join dominates, so the before/after attribution comes from an
-alternating A/B run against the previous commit rather than from the two
-committed runs alone.
+**Where qe still loses.** The three remaining losses are operator-bound. With
+four scan threads, `group_region` is 1.32x, `group_customer` 1.32x, and
+`join_country` 2.68x of DuckDB; at eight threads they are 1.53x, 1.33x, and
+2.70x. The join is the worst loss because the serial probe, the per-column
+`Take` that materializes joined rows, and the aggregate that consumes them all
+still run on one thread while DuckDB's whole pipeline is vectorized and
+parallel. The scan is no longer the explanation, which is why the next
+performance step is a parallel operator rather than more decode concurrency;
+the [write-up](docs/engineering-writeup.md#64-parallel-row-group-scan) keeps the
+earlier attribution work, including the fix that cut low-cardinality `GROUP BY`
+from 5.1 s to around 0.25 s. Absolute times drift between benchmark sessions,
+including for queries where the sort or join dominates, so cross-session
+comparisons are context, not attribution.
 
 **The GPU result is deliberately not presented as a win.** On
 `filter_aggregate`, the GPU kernel itself is tiny (0.050 ms kernel, 0.217 ms

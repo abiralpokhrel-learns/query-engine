@@ -433,6 +433,7 @@ def markdown_report(results: dict) -> str:
     gpu_requested = summary.get("gpu_requested", False)
     gpu_available = summary.get("gpu_available", False)
     gpu_queries = summary.get("gpu_queries", 0)
+    scan_threads = results["config"].get("scan_threads") or [results["config"]["cpu_threads"]]
 
     if gpu_requested and gpu_available:
         gpu_note = (
@@ -485,6 +486,8 @@ def markdown_report(results: dict) -> str:
         f"median of {results['config']['repeats']} runs after "
         f"{results['config']['warmups']} warm-up run(s).",
         "",
+        f"Scan thread counts measured: {', '.join(str(count) for count in scan_threads)}.",
+        "",
         f"> {gpu_note}",
         "",
         "| Query | CPU median (ms) | GPU median (ms) | DuckDB median (ms) | "
@@ -514,9 +517,51 @@ def markdown_report(results: dict) -> str:
             f"| {query['id']} | {cpu:.2f} | {gpu_ms} | {duck:.2f} | {ratio:.2f}x | "
             f"{gpu_ratio} | {gpu_path} |"
         )
+    if len(scan_threads) > 1:
+        header = (
+            "| Query | DuckDB (ms) | "
+            + " | ".join(f"{count} thread" + ("s" if count != 1 else "") for count in scan_threads)
+            + " |"
+        )
+        rule = "|---|---:|" + "---:|" * len(scan_threads)
+        lines += [
+            "### Scan thread scaling",
+            "",
+            "`--threads N` parallelizes Parquet row-group decoding only; every other",
+            "operator stays single-threaded. Values are `execute_ms` medians, with the",
+            "CPU/DuckDB ratio in parentheses. Each thread count is verified against",
+            "DuckDB before it is timed, so a faster number cannot come from changed rows.",
+            "",
+            header,
+            rule,
+        ]
+        for query in results["queries"]:
+            duck = query["duckdb"]["median_ms"]
+            cells = []
+            for count in scan_threads:
+                measure = (query.get("scan_threads") or {}).get(str(count))
+                if not measure:
+                    cells.append("-")
+                    continue
+                millis = measure["median_ms"]
+                ratio = millis / duck if duck else float("inf")
+                cells.append(f"{millis:.2f} ({ratio:.2f}x)")
+            lines.append(f"| {query['id']} | {duck:.2f} | " + " | ".join(cells) + " |")
+        lines.append("")
+        win_counts = []
+        for count in scan_threads:
+            wins = 0
+            for query in results["queries"]:
+                measure = (query.get("scan_threads") or {}).get(str(count))
+                if measure and measure["median_ms"] < query["duckdb"]["median_ms"]:
+                    wins += 1
+            win_counts.append(f"{count} thread(s): **{wins}/{len(results['queries'])}**")
+        lines += ["Wins vs DuckDB by scan thread count — " + "; ".join(win_counts) + ".", ""]
+
     lines += [
         "",
-        f"CPU wins vs DuckDB: **{summary['cpu_wins']}**; "
+        f"CPU wins vs DuckDB at the primary scan thread count "
+        f"({results['config']['cpu_threads']}): **{summary['cpu_wins']}**; "
         f"DuckDB wins: **{summary['duckdb_wins']}**; "
         f"ties: **{summary['ties']}**.",
         "",
@@ -537,9 +582,11 @@ def markdown_report(results: dict) -> str:
             ]
     lines += [
         "A value below 1.00x means the first engine was faster; a value above 1.00x "
-        "means the second was faster. DuckDB runs with its default thread count, while "
-        "the engine is single-threaded. Full timings, per-run values, query text, "
-        "versions, and dataset metadata are in the adjacent JSON file.",
+        "means the second was faster. DuckDB runs with its default thread count. The "
+        "engine's default scan is single-threaded; the scan-thread table above reports "
+        "the opt-in parallel decode over the same verified results. Full timings, "
+        "per-run values, query text, versions, and dataset metadata are in the adjacent "
+        "JSON file.",
         "",
     ]
 
@@ -618,6 +665,13 @@ def main() -> int:
         action="store_true",
         help="Also measure the optional CUDA global-aggregate path with qe-cli --gpu.",
     )
+    parser.add_argument(
+        "--scan-threads",
+        default="1",
+        help="Comma-separated scan thread counts to measure (default: 1). The first "
+        "value is the primary CPU measurement used for the CPU/DuckDB ratio; the "
+        "rest are reported as a scan-thread scaling table.",
+    )
     args = parser.parse_args()
 
     if not BINARY.exists():
@@ -626,6 +680,22 @@ def main() -> int:
         parser.error("--repeats must be >= 1 and --warmups >= 0")
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
+
+    scan_threads: list[int] = []
+    for field in args.scan_threads.split(","):
+        field = field.strip()
+        if not field:
+            continue
+        try:
+            count = int(field)
+        except ValueError:
+            parser.error(f"--scan-threads expects integers, got '{field}'")
+        if count < 1 or count > 1024:
+            parser.error("--scan-threads values must be between 1 and 1024")
+        if count not in scan_threads:
+            scan_threads.append(count)
+    if not scan_threads:
+        parser.error("--scan-threads needs at least one thread count")
 
     data_dir = args.data.resolve()
     manifest = ensure_data(
@@ -650,11 +720,16 @@ def main() -> int:
     print("verifying every benchmark query against DuckDB...")
     query_results = []
     for spec in QUERIES:
-        verification = (
-            {"verified": False, "row_count": None, "columns": None, "gpu": None}
-            if args.skip_verify
-            else verify_query(conn, data_dir, spec["sql"])
-        )
+        # Every thread count must produce the same rows as DuckDB: the parallel
+        # scan is only allowed to change wall time, never results.
+        verified_threads = {}
+        for count in scan_threads:
+            verified_threads[str(count)] = (
+                {"verified": False, "row_count": None, "columns": None, "gpu": None}
+                if args.skip_verify
+                else verify_query(conn, data_dir, spec["sql"], "--threads", str(count))
+            )
+        verification = verified_threads[str(scan_threads[0])]
         gpu_verification = None
         if args.gpu:
             gpu_verification = (
@@ -670,15 +745,28 @@ def main() -> int:
                 "sql": spec["sql"],
                 "regression_check": spec.get("regression_check", True),
                 **verification,
+                "verification_by_threads": verified_threads,
                 "gpu_verification": gpu_verification,
             }
         )
 
     print("benchmarking...")
     for query in query_results:
-        query["cpu"] = measure_qe(
-            data_dir, query["sql"], args.batch_size, args.repeats, args.warmups
-        )
+        # scan_threads measures the same query at each requested scan thread
+        # count. The first entry is the primary CPU measurement, so the
+        # committed baseline and the PR regression gate keep their meaning.
+        query["scan_threads"] = {}
+        for count in scan_threads:
+            query["scan_threads"][str(count)] = measure_qe(
+                data_dir,
+                query["sql"],
+                args.batch_size,
+                args.repeats,
+                args.warmups,
+                "--threads",
+                str(count),
+            )
+        query["cpu"] = query["scan_threads"][str(scan_threads[0])]
         query["duckdb"] = measure_duckdb(conn, query["sql"], args.repeats, args.warmups)
         if args.gpu:
             query["gpu"] = measure_qe(
@@ -704,9 +792,19 @@ def main() -> int:
         gpu_text = ""
         if query["gpu"] and query["gpu"].get("gpu_used"):
             gpu_text = f", GPU {query['gpu']['median_ms']:.2f} ms"
+        threads_text = ""
+        if len(scan_threads) > 1:
+            threads_text = (
+                " ["
+                + ", ".join(
+                    f"t{count}={query['scan_threads'][str(count)]['median_ms']:.2f}"
+                    for count in scan_threads
+                )
+                + "]"
+            )
         print(
             f"  {query['id']}: CPU {query['cpu']['median_ms']:.2f} ms"
-            f"{gpu_text}, DuckDB {query['duckdb']['median_ms']:.2f} ms"
+            f"{threads_text}{gpu_text}, DuckDB {query['duckdb']['median_ms']:.2f} ms"
         )
     conn.close()
 
@@ -728,7 +826,8 @@ def main() -> int:
             "repeats": args.repeats,
             "warmups": args.warmups,
             "duckdb_threads": duckdb_threads,
-            "cpu_threads": 1,
+            "cpu_threads": scan_threads[0],
+            "scan_threads": scan_threads,
             "gpu_requested": args.gpu,
             "gpu_available": gpu_available,
             "timer": "CLI internal execute_ms (scan open through result materialization)",
