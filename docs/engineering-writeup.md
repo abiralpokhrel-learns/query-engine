@@ -116,6 +116,17 @@ rows and is configurable with `--batch-size`. The core operators are:
 
 - **Scan**: Parquet reader + pushed filters + residual filtering. A scan with no
   required columns and no predicate counts rows directly from Parquet metadata.
+  With `--threads N > 1` it decodes row groups concurrently: worker `w` owns the
+  row groups at positions `w, w+N, ...`, each worker opens its own
+  `parquet::arrow::FileReader`, and a decoded, filtered row group is buffered as
+  one "unit" until the consumer reaches it. Units are consumed strictly in
+  row-group order — the order the serial reader produces — and a fixed budget of
+  `2N` decode tokens bounds how many row groups sit in memory at once. Slicing
+  into `batch_size` rows, applying pushed filters, and skipping empty slices
+  mirror the serial loop exactly, so the emitted batch sequence, results, and
+  scan statistics are identical at any thread count. A worker error is captured
+  under the coordinator's mutex and returned from the consumer's next pull, and
+  the destructor sets a shutdown flag before joining.
 - **Filter**: evaluates a predicate array and compacts the batch.
 - **Project**: evaluates expressions with Arrow compute kernels.
 - **Aggregate**: hash grouping with `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`.
@@ -156,6 +167,9 @@ and non-finite floats, and compares every value. It also asserts:
 - duplicate join keys and `NULL` join keys;
 - left joins with unmatched rows, `NULL`-side filters, and chained joins;
 - batch-size invariance (1, 7, 128, 8,192 rows);
+- thread-count invariance (`--threads` 1, 2, 4, 8, including threads × batch
+  size combinations), equal scan statistics between the serial and parallel
+  scans, and an unchanged metadata-only `COUNT(*)` path under threads;
 - that `--explain` shows the expected pushed predicate and the exact pruned
   column list;
 - that row-group skipping actually happens (`row_groups_skipped > 0` and
@@ -437,6 +451,57 @@ empty-string key, run as inner and left joins at batch sizes 1, 7, 128, and
 8,192 against DuckDB; the differential fuzzer (400 queries, two seeds) also
 exercises the new path.
 
+### 6.4 Parallel row-group scan
+
+The next bottleneck is the serial scan itself: every benchmark query pays one
+thread for decoding 1.05 M rows before any operator sees them. The response is
+an opt-in parallel scan (`--threads N`) rather than a parallel executor — the
+planner and operators stay untouched, and the default build keeps the
+single-threaded behavior.
+
+The design trades decode parallelism for a strict ordering guarantee. Row
+groups are distributed round-robin to `N` workers, each owning one independent
+`parquet::arrow::FileReader` (the Arrow reader is not safe to share across
+threads). A worker decodes its row group completely, applies the pushed filters
+per `batch_size` slice, and publishes the unit; the consumer hands out batches
+only from the row group the serial reader would have reached next. A fixed
+budget of `2N` decode tokens bounds the buffer, so peak memory stays close to
+the serial scan and `--threads 1024` cannot turn into an unbounded prefetch.
+Because the batch sequence is bit-identical to the serial scan, downstream
+`COUNT`/`SUM`/`AVG` accumulation, sort stability, and output order cannot
+depend on the thread count.
+
+Writing the thread-invariance tests caught a latent aggregate bug before the
+feature shipped. The vectorized fast path read `raw_values()` and indexed it
+with an additional `offset + row`, but Arrow's `raw_values()` already includes
+the slice offset, so any value array with a nonzero offset was read shifted.
+Serial scans only ever emit offset-zero batches — the reader builds fresh
+arrays and filters compact them — which is why the batch-size sweep never
+noticed. The parallel scan slices each decoded row group, and the first
+`--threads 4, --batch-size 7` test run returned a `SUM` of `-9.94e+298` with a
+correct `COUNT` and `AVG` (the `AVG` argument was cast to double first, giving
+a fresh offset-zero array; `COUNT(*)` reads no values at all). The fix resolves
+offset-exclusive pointers for values and keeps the explicit offset only for the
+validity bitmap, where it belongs; the same bug hid in five more accumulation
+loops (integer `SUM`, integer and double `MIN`/`MAX`).
+
+An alternating same-session A/B on the 1M-row dataset (`--threads 8` vs
+`--threads 1`, 7 interleaved rounds, 5 repetitions per invocation, minimum
+`execute_ms`) measured:
+
+| Query | threads=1 | threads=8 | speedup |
+|---|---:|---:|---:|
+| `topk` (sort over 1M rows) | 33.7 ms | 11.8 ms | 2.9x |
+| `group_region` (`GROUP BY` 1M rows) | 56.9 ms | 29.2 ms | 1.95x |
+| global `COUNT`/`SUM`/`AVG` | 18.8 ms | 10.5 ms | 1.8x |
+| `join_country`-shaped aggregate | 233.1 ms | 196.6 ms | 1.2x |
+
+Medians tell the same story (2.7x, 2.1x, 1.7x, 1.1x). The scan-bound queries
+gain most because decode overlaps with the single-threaded aggregate and sort;
+the join query gains least because its serial hash probe and key serialization
+dominate. The committed benchmark JSON still describes the default
+single-threaded scan and was not regenerated.
+
 ## 7. GPU status and design
 
 The original plan called for CUDA kernels for filter and/or aggregation on an
@@ -531,7 +596,9 @@ same verified device.
 
 Known 0.2.0 limits:
 
-- single-threaded, single-process, read-only;
+- read-only, single-process; operators other than the scan are
+  single-threaded, and the scan decodes row groups in parallel only with
+  opt-in `--threads`;
 - flat schemas only; nested Parquet types are rejected at catalog load;
 - inner and left joins only, with equality keys whose Arrow types must match
   exactly; no right, full, cross, semi, or anti joins;
@@ -541,14 +608,16 @@ Known 0.2.0 limits:
   and no `GROUP BY` expressions;
 - in-memory sort and aggregation, with no spilling;
 - scalar accumulation loops within vectorized aggregation batches, row-wise
-  key serialization for multi-key joins, and no parallel operators;
+  key serialization for multi-key joins, and no parallel operators beyond the
+  scan;
 - the CUDA path is optional and limited to global floating-point `SUM`/`AVG`
   plus host-side `COUNT`; grouped aggregates, filters, joins, and integer sums
   remain CPU-only.
 
 Version 2 work still open, in priority order:
 
-1. Multi-threaded scans and operators.
+1. Parallel operators beyond the scan: join build/probe, aggregation, sort,
+   and the executor loop itself.
 2. CUDA grouped aggregation, filter kernels, and joins, with separate
    transfer/kernel timers and CPU fallback; the global floating-point path is
    implemented and measured.
