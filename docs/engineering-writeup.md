@@ -612,7 +612,7 @@ same verified device.
 
 ## 8. Limits and version 2 ideas
 
-Known 0.2.0 limits:
+Known 0.3.0 limits:
 
 - read-only, single-process; operators other than the scan are
   single-threaded, and the scan decodes row groups in parallel only with

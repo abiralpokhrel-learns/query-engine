@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-12
+
 ### Added
 
 - Optional parallel scan: `--threads N` decodes Parquet row groups concurrently.
@@ -15,8 +17,12 @@ All notable changes to this project are documented here. The format follows
   thread count. An alternating same-session A/B on the 1M-row dataset
   (7 rounds, min-vs-min, `--threads 8` vs `--threads 1`) measured 2.9x on the
   top-k query, 1.95x on `GROUP BY region`, 1.8x on the global aggregate, and
-  1.2x on the join aggregate; the committed benchmark JSON is unchanged and
-  still describes the default single-threaded scan.
+  1.2x on the join aggregate. The committed run now reproduces the scaling
+  directly instead of describing only the default single-threaded scan.
+- `--scan-threads 1,4,8` in `run_benchmarks.py`: every requested thread count is
+  verified against DuckDB before it is timed, and the Markdown report publishes a
+  scan-thread scaling table. The first count stays the primary CPU measurement,
+  so the pull-request regression gate keeps comparing the same thing.
 - Contributor guide, pull-request checklist, and issue templates.
 - `clang-format` and `ruff` configuration, with format checks in CI.
 - ASan/UBSan CI job, warnings-as-errors builds, coverage reporting, and a
@@ -59,6 +65,13 @@ All notable changes to this project are documented here. The format follows
 - Committed benchmark artifacts regenerated from a verified run:
   `join_country` is 304.51 ms (3.66x DuckDB); other queries moved within the
   documented cross-session drift.
+- Committed benchmark artifacts regenerated again with scan threads measured
+  (2026-11-12, five repetitions after two warm-ups). At four scan threads `topk`
+  runs in 53.38 ms (from 119.14 ms), `GROUP BY region` in 54.78 ms (from
+  116.50 ms), `group_customer` in 137.65 ms (from 202.56 ms), and the join
+  aggregate in 203.53 ms (from 297.83 ms). The engine now wins 5 of 8 queries
+  against DuckDB at four or eight threads instead of 3 of 8, and four threads
+  matched or beat eight on every scan-bound query.
 - CI now uses the current `actions/checkout` and `setup-micromamba` releases.
 
 ## [0.2.0] - 2026-11-06
@@ -96,5 +109,6 @@ principles in C++20.
   keyword token, rejecting malformed clauses such as `BETWEEN 1 OR 2`.
 - Fuzz reporting now shows the correct pass count when a run stops early.
 
-[Unreleased]: https://github.com/abiralpokhrel-learns/query-engine/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/abiralpokhrel-learns/query-engine/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/abiralpokhrel-learns/query-engine/releases/tag/v0.3.0
 [0.2.0]: https://github.com/abiralpokhrel-learns/query-engine/releases/tag/v0.2.0
