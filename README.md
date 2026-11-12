@@ -18,10 +18,11 @@ dataset detail needed to reproduce the numbers, and renders the published chart
 from that stored data.
 
 **Status: 0.3.0 with an optional CUDA global-aggregate path.** Version 1 is
-complete, and selected version 2 work is now implemented: `DISTINCT`, `HAVING`,
-`LEFT JOIN`, `IN` / `BETWEEN`, `LIKE`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort
-for `ORDER BY ... LIMIT`, batch-vectorized hash aggregation, batch-vectorized
-single-key hash joins, an opt-in parallel scan (`--threads`) that decodes
+complete, and selected version 2 work is implemented: `DISTINCT`, `HAVING`,
+`LEFT JOIN`, `IN`/`BETWEEN`, `LIKE`, `OFFSET`, metadata-only `COUNT(*)`, a top-k
+sort for `ORDER BY ... LIMIT`, batch-vectorized hash aggregation,
+batch-vectorized single-key hash joins, an opt-in parallel scan (`--threads`)
+that decodes
 Parquet row groups concurrently while preserving the exact serial output order,
 and an opt-in CUDA build for global aggregates. All 207 tests (198 CPU
 correctness tests plus 9 GPU-gated tests that skip on CPU-only builds) pass
@@ -42,7 +43,7 @@ results are in [`benchmarks/results/latest.md`](benchmarks/results/latest.md).
 > CUDA device is available. See the
 > [engineering write-up](docs/engineering-writeup.md).
 
-**Jump to:** [Demo](#demo) · [Getting started](#getting-started) · [Architecture](#architecture) · [SQL subset](#sql-subset) · [Benchmarks](#benchmarks) · [Tests](#test-suite) · [Known limits](#known-limits-020) · [Security](#security) · [Contributing](CONTRIBUTING.md)
+**Jump to:** [Demo](#demo) · [Getting started](#getting-started) · [Architecture](#architecture) · [SQL subset](#sql-subset) · [Benchmarks](#benchmarks) · [Tests](#test-suite) · [Known limits](#known-limits-030) · [Security](#security) · [Contributing](CONTRIBUTING.md)
 
 ## Highlights
 
@@ -58,7 +59,7 @@ results are in [`benchmarks/results/latest.md`](benchmarks/results/latest.md).
   strings avoid per-row key hashing.
 - **Batch-vectorized joins.** Single-key integer and string joins probe an
   open-addressed table with inline matching instead of serializing a key string
-  per row; the same-session A/B below runs `join_country` about 1.8x faster.
+  per row; a same-session A/B measured `join_country` about 1.8x faster.
 - **Opt-in parallel scan.** `--threads N` decodes row groups concurrently with
   one Parquet reader per worker and emits batches in the exact serial order,
   bounded by a fixed token budget; results and scan statistics never depend on
@@ -296,6 +297,7 @@ Parquet files, including:
 
 - filters with `NULL`, boolean, string, and date semantics;
 - `IN` / `NOT IN` / `BETWEEN` / `NOT BETWEEN`, including `NULL` lists;
+- `[NOT] LIKE` with `%` and `_`, including empty patterns and `NULL` results;
 - empty inputs, empty groups, `NULL` groups, and single-row groups;
 - integer and floating-point arithmetic, division, and negation;
 - multi-key hash joins, duplicate keys, and `NULL` join keys;
@@ -342,14 +344,16 @@ artifact, and updates the repository-hosted coverage badge from `main`.
 
 The harness verifies every query against DuckDB before timing it, then records
 warm-ups, repeats, raw runs, medians, query text, hardware, library versions,
-and the dataset manifest. Charts are rendered from the stored JSON, never from
+and the dataset manifest. With `--scan-threads`, every thread count is verified
+and timed separately. Charts are rendered from the stored JSON, never from
 hand-typed numbers. Pull requests run the same harness and fail if a gated
 query's CPU/DuckDB ratio grows more than 3x beyond the committed baseline. The
 `global_aggregate` query is verified and reported, but it is not a gate because
 DuckDB's thread scaling makes its scan-bound ratio unstable across CI runners.
 
 ```bash
-python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2
+python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2 \
+  --scan-threads 1,4,8
 # Optional CUDA measurements; requires a CUDA build and a visible device.
 QE_CLI=build-cuda/qe-cli python scripts/run_benchmarks.py \
   --rows 1000000 --repeats 3 --warmups 1 --gpu
@@ -357,27 +361,23 @@ QE_CLI=build-cuda/qe-cli python scripts/run_benchmarks.py \
 
 ### Latest results
 
-Latest run: 2026-11-12, 1,000,000 sales rows, 16 row groups, 22.5 MB Parquet,
-batch size 8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2,
-Ubuntu 24.04. CPU-only build; five timed repetitions after two warm-ups at each
-scan thread count, and DuckDB used its default 16 threads. Every thread count
-is verified against DuckDB before it is timed, so a faster row cannot come from
-a different result.
+Measured 2026-11-12 on 1,000,000 sales rows, 16 row groups, 22.5 MB Parquet,
+batch size 8,192, on an AMD Ryzen 7 170 (16 logical CPUs) with 7.4 GiB RAM in
+WSL2 Ubuntu 24.04, using the default CPU-only build. Each thread count is timed
+as five repetitions after two warm-ups, and every one is verified against DuckDB
+first, so a faster row here cannot come from different results. DuckDB runs with
+its default 16 threads.
 
-This run *is* the committed run: `run_benchmarks.py --scan-threads 1,4,8`
-records the opt-in parallel scan alongside the single-threaded baseline, so the
-table no longer describes an engine that is single-threaded at every point. It
-used the default CPU-only build, so no GPU column is shown here; the optional
-CUDA path is measured and reported separately in
-[Section 7.3 of the write-up](docs/engineering-writeup.md#73-measured-result),
-where `--gpu` runs a device self-test before timing so CUDA module loading is
-not charged to the first query.
+The table reports the serial baseline and the opt-in parallel scan from one
+verified session, rather than describing only the default configuration. GPU
+timings are not in it: they come from a separate CUDA build and are reported in
+[Section 7.4 of the write-up](docs/engineering-writeup.md#74-scaling-to-ten-million-rows).
 
 <p align="center">
-  <img src="benchmarks/charts/latest.png" alt="Benchmark chart comparing qe CPU, qe GPU, and DuckDB median wall time for eight queries, plus a relative-speed panel." width="100%">
+  <img src="benchmarks/charts/latest.png" alt="Benchmark chart comparing qe-cli at one scan thread and DuckDB median wall time for eight queries, plus a relative-speed panel." width="100%">
 </p>
 
-<p align="center"><sub>Chart generated from <code>benchmarks/results/latest.json</code> with <code>scripts/plot_benchmarks.py</code>. GPU bars are end-to-end medians and appear only for queries that actually ran a verified CUDA reduction.</sub></p>
+<p align="center"><sub>Chart generated from <code>benchmarks/results/latest.json</code> with <code>scripts/plot_benchmarks.py</code>. It renders the default single-threaded configuration against DuckDB; the scan-thread series are in the table above, and GPU bars appear only for queries that actually ran a verified CUDA reduction.</sub></p>
 
 | Query | qe 1 thread (ms) | qe 4 threads (ms) | qe 8 threads (ms) | DuckDB (ms) | 1-thread ratio | 8-thread ratio |
 |---|---:|---:|---:|---:|---:|---:|
@@ -411,11 +411,11 @@ payload column is decoded. Aggregation builds group IDs for a whole batch and
 updates state in one fused pass, and single-key integer/string joins probe an
 open-addressed table instead of serializing a key per row; in an alternating
 same-session A/B against the previous commit (14 rounds, min-vs-min), this
-branch ran the `join_country` query in 300 ms versus 537 ms before. With four
-or more scan threads the global aggregate and `topk` cross over as well, at
-0.79x and 0.87x of DuckDB. The switch does not come from a faster operator:
-it comes from overlapping Parquet decode with the single-threaded aggregate
-and sort behind it, which is exactly what the scan-thread table measures.
+change ran `join_country` in 300 ms versus 537 ms before. Four scan threads also
+take the global aggregate and `topk` below DuckDB, at 0.79x and 0.87x. Neither
+crossing comes from a faster operator: both come from overlapping Parquet decode
+with the single-threaded aggregate or sort behind it, which is exactly what the
+scan-thread table isolates.
 
 **Where qe still loses.** The three remaining losses are operator-bound. With
 four scan threads, `group_region` is 1.32x, `group_customer` 1.32x, and
@@ -431,21 +431,20 @@ from 5.1 s to around 0.25 s. Absolute times drift between benchmark sessions,
 including for queries where the sort or join dominates, so cross-session
 comparisons are context, not attribution.
 
-**The GPU result is deliberately not presented as a win.** On
-`filter_aggregate`, the GPU kernel itself is tiny (0.050 ms kernel, 0.217 ms
-transfer); the 10.11 ms end-to-end result versus 7.18 ms on the CPU is within
-local run-to-run noise on a query this small, so it is not claimed as a
-speedup. On `global_aggregate`, moving the floating-point `SUM`/`AVG` work to
-the GPU does not offset the host buffering and transfer: 80.57 ms versus
-63.49 ms on the CPU, a 1.27x GPU/CPU ratio, and the GPU path is also slower
-than DuckDB's vectorized, multi-threaded aggregate. Repeated local runs of the
-full-table sum straddle 1.0x, so the honest conclusion is that the current path
-is roughly tied at best; the scan and host buffering dominate. Grouped
-aggregates, filters, joins, integer sums, and `MIN`/`MAX` stay on the CPU.
-These are measured end-to-end query times, not transfer-only or kernel-only
-speedups; the raw per-run values and separate transfer/kernel timings are in
-[`benchmarks/results/latest.json`](benchmarks/results/latest.json) and
-[`benchmarks/results/latest.md`](benchmarks/results/latest.md).
+**The GPU result is deliberately not presented as a win.** The optional CUDA
+path has not been measured ahead of the CPU on any query it supports. On
+`filter_aggregate` the kernel is trivial (0.256 ms at ten million rows); the
+end-to-end result is 9.10 ms against 6.10 ms on the CPU at one million rows, and
+34.29 ms against 35.56 ms at ten million, which is a 1.3 ms difference on a query
+DuckDB finishes in 28.13 ms. On `global_aggregate` the GPU is slower at both
+sizes, 1.79x the CPU at one million rows and 1.43x at ten million, because the
+host-side buffering rather than the transfer dominates: transfer and kernel
+together are 87 ms of that 753 ms query, and the rest is host work. Grouped
+aggregates, filters, joins, integer sums, and `MIN`/`MAX` stay on the CPU. Every
+number is a measured end-to-end query time, never a transfer-only or kernel-only
+speedup, and the raw per-run values are committed as
+[`gpu_1m_20261112.json`](benchmarks/results/gpu_1m_20261112.json) and
+[`gpu_10m_20261112.json`](benchmarks/results/gpu_10m_20261112.json).
 
 ## Repository layout
 
@@ -475,7 +474,8 @@ scripts/
   render_demo_gif.py          README terminal transcript from real CLI output
   demo.sh                     one-command demo
 benchmarks/
-  results/                    latest verified JSON/Markdown report
+  results/                    latest verified JSON/Markdown report, plus the
+                              1M and 10M GPU scaling runs
   charts/                     chart generated from the stored JSON
 data/                         generated sample data (created by the demo)
 docs/
