@@ -17,13 +17,14 @@ engine on the same data and queries as DuckDB, stores every timing, version, and
 dataset detail needed to reproduce the numbers, and renders the published chart
 from that stored data.
 
-**Status: 0.2.0 with an optional CUDA global-aggregate path.** Version 1 is
-complete, and selected version 2 work is now implemented: `DISTINCT`, `HAVING`,
-`LEFT JOIN`, `IN` / `BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort
-for `ORDER BY ... LIMIT`, batch-vectorized hash aggregation, batch-vectorized
-single-key hash joins, an opt-in parallel scan (`--threads`) that decodes
+**Status: 0.3.0 with an optional CUDA global-aggregate path.** Version 1 is
+complete, and selected version 2 work is implemented: `DISTINCT`, `HAVING`,
+`LEFT JOIN`, `IN`/`BETWEEN`, `LIKE`, `OFFSET`, metadata-only `COUNT(*)`, a top-k
+sort for `ORDER BY ... LIMIT`, batch-vectorized hash aggregation,
+batch-vectorized single-key hash joins, an opt-in parallel scan (`--threads`)
+that decodes
 Parquet row groups concurrently while preserving the exact serial output order,
-and an opt-in CUDA build for global aggregates. All 194 tests (185 CPU
+and an opt-in CUDA build for global aggregates. All 207 tests (198 CPU
 correctness tests plus 9 GPU-gated tests that skip on CPU-only builds) pass
 against DuckDB on generated edge-case datasets, the C++ parser suite passes,
 and the differential fuzzer matches DuckDB on multi-seed sweeps. Every
@@ -42,7 +43,7 @@ results are in [`benchmarks/results/latest.md`](benchmarks/results/latest.md).
 > CUDA device is available. See the
 > [engineering write-up](docs/engineering-writeup.md).
 
-**Jump to:** [Demo](#demo) · [Getting started](#getting-started) · [Architecture](#architecture) · [SQL subset](#sql-subset) · [Benchmarks](#benchmarks) · [Tests](#test-suite) · [Known limits](#known-limits-020) · [Security](#security) · [Contributing](CONTRIBUTING.md)
+**Jump to:** [Demo](#demo) · [Getting started](#getting-started) · [Architecture](#architecture) · [SQL subset](#sql-subset) · [Benchmarks](#benchmarks) · [Tests](#test-suite) · [Known limits](#known-limits-030) · [Security](#security) · [Contributing](CONTRIBUTING.md)
 
 ## Highlights
 
@@ -58,12 +59,14 @@ results are in [`benchmarks/results/latest.md`](benchmarks/results/latest.md).
   strings avoid per-row key hashing.
 - **Batch-vectorized joins.** Single-key integer and string joins probe an
   open-addressed table with inline matching instead of serializing a key string
-  per row; the same-session A/B below runs `join_country` about 1.8x faster.
+  per row; a same-session A/B measured `join_country` about 1.8x faster.
 - **Opt-in parallel scan.** `--threads N` decodes row groups concurrently with
   one Parquet reader per worker and emits batches in the exact serial order,
   bounded by a fixed token budget; results and scan statistics never depend on
-  the thread count. In a same-session alternating A/B on the 1M-row dataset it
-  ran the scan-bound queries 1.8–2.9x faster.
+  the thread count. In the committed run, four scan threads cut `topk` from
+  119.14 ms to 53.38 ms (2.2x), `GROUP BY region` from 116.50 ms to 54.78 ms
+  (2.1x), the global aggregate from 52.27 ms to 26.61 ms (2.0x), and the join
+  aggregate from 297.83 ms to 203.53 ms (1.5x).
 - **Performance claims with receipts.** Every benchmark query is verified before
   timing; raw runs, hardware, versions, and query text live in committed JSON,
   and the chart is regenerated from that file. Wins and losses are both reported.
@@ -124,7 +127,7 @@ The CLI is self-documenting:
 
 ```text
 $ build/qe-cli --help
-qe-cli 0.2.0 - columnar SQL query engine
+qe-cli 0.3.0 - columnar SQL query engine
 
 Usage:
   qe-cli [options] <file.parquet> [SQL]
@@ -225,8 +228,9 @@ FROM table [alias]
 
 Supported expressions: column references, integer / double / string / boolean
 / `NULL` literals, `+ - * /`, comparisons, `AND`, `OR`, `NOT`, `IS NULL`,
-`IS NOT NULL`, `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`, and `COUNT(*)`,
-`COUNT(col)`, `SUM`, `AVG`, `MIN`, `MAX`. Inner and left outer joins support one
+`IS NOT NULL`, `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`, `[NOT] LIKE`
+with `%` and `_`, and `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN`, `MAX`.
+Inner and left outer joins support one
 or more equality conditions. Identifiers are case-insensitive, quoted
 identifiers and `''`-escaped strings are accepted, and dates are compared as ISO
 `YYYY-MM-DD` literals.
@@ -238,7 +242,7 @@ LIMIT` uses a bounded top-k sort rather than sorting every matching row.
 
 Unsupported SQL is rejected with a clear error rather than being silently
 misinterpreted. Still out of scope: `RIGHT`/`FULL`/`CROSS`/`NATURAL` joins,
-`JOIN ... USING`, `LIKE`, `NULLS FIRST/LAST`, `UNION`/`EXCEPT`/`INTERSECT`,
+`JOIN ... USING`, `NULLS FIRST/LAST`, `UNION`/`EXCEPT`/`INTERSECT`,
 subqueries, CTEs, window functions, `DISTINCT` inside aggregates, aggregate
 arguments that are expressions, `GROUP BY` expressions, and non-aggregate
 columns mixed with aggregates.
@@ -293,6 +297,7 @@ Parquet files, including:
 
 - filters with `NULL`, boolean, string, and date semantics;
 - `IN` / `NOT IN` / `BETWEEN` / `NOT BETWEEN`, including `NULL` lists;
+- `[NOT] LIKE` with `%` and `_`, including empty patterns and `NULL` results;
 - empty inputs, empty groups, `NULL` groups, and single-row groups;
 - integer and floating-point arithmetic, division, and negation;
 - multi-key hash joins, duplicate keys, and `NULL` join keys;
@@ -321,7 +326,7 @@ the supported subset, runs each against this engine and DuckDB, and compares
 every value; a 30-query sample is part of every pytest run.
 
 ```bash
-python -m pytest tests -q                     # 194 tests; 9 GPU tests skip without a device
+python -m pytest tests -q                     # 207 tests; 9 GPU tests skip without a device
 ctest --test-dir build --output-on-failure    # parser/unit tests
 ctest --test-dir build-cuda --output-on-failure  # parser + CUDA device self-test
 python scripts/fuzz_compare.py --queries 1000 --seed 2026
@@ -339,14 +344,16 @@ artifact, and updates the repository-hosted coverage badge from `main`.
 
 The harness verifies every query against DuckDB before timing it, then records
 warm-ups, repeats, raw runs, medians, query text, hardware, library versions,
-and the dataset manifest. Charts are rendered from the stored JSON, never from
+and the dataset manifest. With `--scan-threads`, every thread count is verified
+and timed separately. Charts are rendered from the stored JSON, never from
 hand-typed numbers. Pull requests run the same harness and fail if a gated
 query's CPU/DuckDB ratio grows more than 3x beyond the committed baseline. The
 `global_aggregate` query is verified and reported, but it is not a gate because
 DuckDB's thread scaling makes its scan-bound ratio unstable across CI runners.
 
 ```bash
-python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2
+python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2 \
+  --scan-threads 1,4,8
 # Optional CUDA measurements; requires a CUDA build and a visible device.
 QE_CLI=build-cuda/qe-cli python scripts/run_benchmarks.py \
   --rows 1000000 --repeats 3 --warmups 1 --gpu
@@ -354,31 +361,45 @@ QE_CLI=build-cuda/qe-cli python scripts/run_benchmarks.py \
 
 ### Latest results
 
-Latest run: 1,000,000 sales rows, 16 row groups, 22.5 MB Parquet, batch size
-8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04,
-NVIDIA GeForce RTX 3050 Laptop GPU (4 GB, compute 8.6, CUDA 12.9.86). DuckDB
-used its default 16 threads; the engine ran with its default single-threaded
-scan (opt-in `--threads` parallel decoding is not part of the committed run).
-The GPU run used three timed repetitions after one warm-up; `--gpu` also runs
-a device self-test before timing so CUDA module loading is not charged to the
-first query.
+Measured 2026-11-12 on 1,000,000 sales rows, 16 row groups, 22.5 MB Parquet,
+batch size 8,192, on an AMD Ryzen 7 170 (16 logical CPUs) with 7.4 GiB RAM in
+WSL2 Ubuntu 24.04, using the default CPU-only build. Each thread count is timed
+as five repetitions after two warm-ups, and every one is verified against DuckDB
+first, so a faster row here cannot come from different results. DuckDB runs with
+its default 16 threads.
+
+The table reports the serial baseline and the opt-in parallel scan from one
+verified session, rather than describing only the default configuration. GPU
+timings are not in it: they come from a separate CUDA build and are reported in
+[Section 7.4 of the write-up](docs/engineering-writeup.md#74-scaling-to-ten-million-rows).
 
 <p align="center">
-  <img src="benchmarks/charts/latest.png" alt="Benchmark chart comparing qe CPU, qe GPU, and DuckDB median wall time for eight queries, plus a relative-speed panel." width="100%">
+  <img src="benchmarks/charts/latest.png" alt="Benchmark chart comparing qe-cli at one scan thread and DuckDB median wall time for eight queries, plus a relative-speed panel." width="100%">
 </p>
 
-<p align="center"><sub>Chart generated from <code>benchmarks/results/latest.json</code> with <code>scripts/plot_benchmarks.py</code>. GPU bars are end-to-end medians and appear only for queries that actually ran a verified CUDA reduction.</sub></p>
+<p align="center"><sub>Chart generated from <code>benchmarks/results/latest.json</code> with <code>scripts/plot_benchmarks.py</code>. It renders the default single-threaded configuration against DuckDB; the scan-thread series are in the table above, and GPU bars appear only for queries that actually ran a verified CUDA reduction.</sub></p>
 
-| Query | qe CPU (ms) | qe GPU (ms) | DuckDB (ms) | CPU / DuckDB | GPU / CPU | GPU path |
-|---|---:|---:|---:|---:|---:|---|
-| filter_aggregate | 7.18 | 10.11 | 21.79 | 0.33x | 1.41x | CUDA |
-| global_aggregate | 63.49 | 80.57 | 47.34 | 1.34x | 1.27x | CUDA |
-| empty_filter | 0.39 | - | 10.09 | 0.04x | - | CPU fallback |
-| group_region | 125.89 | - | 45.91 | 2.74x | - | CPU fallback |
-| group_customer | 260.41 | - | 114.23 | 2.28x | - | CPU fallback |
-| topk | 118.86 | - | 64.30 | 1.85x | - | CPU fallback |
-| join_country | 304.51 | - | 83.27 | 3.66x | - | CPU fallback |
-| count_star | 0.02 | - | 9.13 | 0.00x | - | CPU fallback |
+| Query | qe 1 thread (ms) | qe 4 threads (ms) | qe 8 threads (ms) | DuckDB (ms) | 1-thread ratio | 8-thread ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| filter_aggregate | 4.76 | 5.15 | 4.54 | 19.90 | 0.24x | 0.23x |
+| global_aggregate | 52.27 | 26.61 | 29.64 | 33.58 | 1.56x | 0.88x |
+| empty_filter | 0.09 | 0.07 | 0.11 | 9.40 | 0.01x | 0.01x |
+| group_region | 116.50 | 54.78 | 63.42 | 41.56 | 2.80x | 1.53x |
+| group_customer | 202.56 | 137.65 | 138.89 | 104.21 | 1.94x | 1.33x |
+| topk | 119.14 | 53.38 | 58.54 | 61.41 | 1.94x | 0.95x |
+| join_country | 297.83 | 203.53 | 204.69 | 75.87 | 3.93x | 2.70x |
+| count_star | 0.01 | 0.01 | 0.01 | 7.25 | 0.00x | 0.00x |
+
+Wins against DuckDB by scan thread count: **3/8** at one thread, **5/8** at
+four, and **5/8** at eight. Four threads matched or beat eight on every
+scan-bound query, which is what 16 row groups and one serial consumer would
+predict: past four workers there is nothing left to overlap, and the extra
+readers only compete for memory and cores. The remaining losses are
+therefore operator-bound, not scan-bound.
+
+The GPU numbers come from a separate session on a separate CUDA build, so they
+are never folded into these ratios; they are read on their own in the next
+section, and the scaling detail is in the write-up.
 
 ### Reading the results
 
@@ -390,39 +411,40 @@ payload column is decoded. Aggregation builds group IDs for a whole batch and
 updates state in one fused pass, and single-key integer/string joins probe an
 open-addressed table instead of serializing a key per row; in an alternating
 same-session A/B against the previous commit (14 rounds, min-vs-min), this
-branch ran the `join_country` query in 300 ms versus 537 ms before.
+change ran `join_country` in 300 ms versus 537 ms before. Four scan threads also
+take the global aggregate and `topk` below DuckDB, at 0.79x and 0.87x. Neither
+crossing comes from a faster operator: both come from overlapping Parquet decode
+with the single-threaded aggregate or sort behind it, which is exactly what the
+scan-thread table isolates.
 
-**Where qe still loses.** The remaining losses come from the default serial
-scan, the sort/output path, and multi-key or `NULL`-heavy join shapes that
-still serialize keys; DuckDB runs all of its operators vectorized and in
-parallel. The opt-in `--threads` parallel scan attacks the first of those: in
-the same-session alternating A/B reported in the
-[write-up](docs/engineering-writeup.md#64-parallel-row-group-scan),
-`--threads 8` ran the scan-bound queries 1.8–2.9x faster — top-k 2.9x,
-`GROUP BY region` 1.95x, the global aggregate 1.8x, the join aggregate 1.2x —
-while results and scan statistics stayed unchanged. See the
-[engineering write-up](docs/engineering-writeup.md) for the analysis and for
-the earlier fix that cut the low-cardinality `GROUP BY` from 5.1 s to around
-0.25 s. Absolute times drift between benchmark sessions, including for queries
-where the sort or join dominates, so the before/after attribution comes from an
-alternating A/B run against the previous commit rather than from the two
-committed runs alone.
+**Where qe still loses.** The three remaining losses are operator-bound. With
+four scan threads, `group_region` is 1.32x, `group_customer` 1.32x, and
+`join_country` 2.68x of DuckDB; at eight threads they are 1.53x, 1.33x, and
+2.70x. The join is the worst loss because the serial probe, the per-column
+`Take` that materializes joined rows, and the aggregate that consumes them all
+still run on one thread while DuckDB's whole pipeline is vectorized and
+parallel. The scan is no longer the explanation, which is why the next
+performance step is a parallel operator rather than more decode concurrency;
+the [write-up](docs/engineering-writeup.md#64-parallel-row-group-scan) keeps the
+earlier attribution work, including the fix that cut low-cardinality `GROUP BY`
+from 5.1 s to around 0.25 s. Absolute times drift between benchmark sessions,
+including for queries where the sort or join dominates, so cross-session
+comparisons are context, not attribution.
 
-**The GPU result is deliberately not presented as a win.** On
-`filter_aggregate`, the GPU kernel itself is tiny (0.050 ms kernel, 0.217 ms
-transfer); the 10.11 ms end-to-end result versus 7.18 ms on the CPU is within
-local run-to-run noise on a query this small, so it is not claimed as a
-speedup. On `global_aggregate`, moving the floating-point `SUM`/`AVG` work to
-the GPU does not offset the host buffering and transfer: 80.57 ms versus
-63.49 ms on the CPU, a 1.27x GPU/CPU ratio, and the GPU path is also slower
-than DuckDB's vectorized, multi-threaded aggregate. Repeated local runs of the
-full-table sum straddle 1.0x, so the honest conclusion is that the current path
-is roughly tied at best; the scan and host buffering dominate. Grouped
-aggregates, filters, joins, integer sums, and `MIN`/`MAX` stay on the CPU.
-These are measured end-to-end query times, not transfer-only or kernel-only
-speedups; the raw per-run values and separate transfer/kernel timings are in
-[`benchmarks/results/latest.json`](benchmarks/results/latest.json) and
-[`benchmarks/results/latest.md`](benchmarks/results/latest.md).
+**The GPU result is deliberately not presented as a win.** Only an ungrouped
+`COUNT`/`SUM`/`AVG` runs on the device at all; grouped aggregates, joins,
+integer sums and `MIN`/`MAX` fall back to the CPU. The one query where the GPU
+lands ahead is `filter_aggregate` at ten million rows, 34.29 against 35.56 ms,
+and a 1.3 ms margin (3.6%) on a query DuckDB answers in 28.13 ms is inside what
+a single session can resolve. At one million rows the same query is slower, 9.10
+against 6.10 ms, because a 0.29 ms kernel does not pay for its own launch and
+transfer. `global_aggregate` loses at both sizes, 1.79x the CPU at one million
+rows and 1.43x at ten million, and the transfer is not the reason: transfer and
+kernel together are 87 ms of that 753 ms run, so host-side buffering is the
+rest. Every number is a measured end-to-end query time, never a transfer-only or
+kernel-only speedup, and the raw per-run values are committed as
+[`gpu_1m_20261112.json`](benchmarks/results/gpu_1m_20261112.json) and
+[`gpu_10m_20261112.json`](benchmarks/results/gpu_10m_20261112.json).
 
 ## Repository layout
 
@@ -452,7 +474,8 @@ scripts/
   render_demo_gif.py          README terminal transcript from real CLI output
   demo.sh                     one-command demo
 benchmarks/
-  results/                    latest verified JSON/Markdown report
+  results/                    latest verified JSON/Markdown report, plus the
+                              1M and 10M GPU scaling runs
   charts/                     chart generated from the stored JSON
 data/                         generated sample data (created by the demo)
 docs/
@@ -486,7 +509,7 @@ creates them on first run with `scripts/generate_data.py`.
 | CUDA toolkit | 12.9.86 (optional `QE_ENABLE_CUDA` build) |
 | GPU | NVIDIA GeForce RTX 3050 Laptop GPU, 4 GB, compute 8.6, driver 591.84 (WSL2) |
 
-## Known limits (0.2.0)
+## Known limits (0.3.0)
 
 - Read-only, single-process engine. Operators other than the scan are
   single-threaded; the scan decodes row groups in parallel only with opt-in
@@ -494,8 +517,10 @@ creates them on first run with `scripts/generate_data.py`.
 - Flat schemas only; nested Parquet types are rejected.
 - Inner and left joins only, with equality keys that must have exactly the same
   Arrow type on both sides. No right, full, cross, semi, or anti joins.
-- No `LIKE`, `NULLS FIRST/LAST`, set operations, subqueries, CTEs, or window
-  functions.
+- No `NULLS FIRST/LAST`, set operations, subqueries, CTEs, or window
+  functions. `LIKE` supports `%` and `_` only; a pattern containing a backslash
+  is rejected instead of being silently reinterpreted, because Arrow's LIKE
+  kernel treats it as an escape character and DuckDB's does not.
 - No `DISTINCT` inside aggregates; aggregate arguments must be plain columns;
   `GROUP BY` accepts plain columns only.
 - Sort and aggregation are in-memory and assume current data sizes; no spilling.

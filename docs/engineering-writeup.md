@@ -19,7 +19,7 @@ opt-in parallel row-group scan (`--threads`, Section 6.4).
 
 At the time of writing:
 
-- 194 tests pass against DuckDB on a CUDA build (185 CPU tests plus 9 GPU-gated
+- 207 tests pass against DuckDB on a CUDA build (198 CPU tests plus 9 GPU-gated
   tests); the GPU tests skip on CPU-only builds.
 - The C++ parser/unit suite passes, and the CUDA build adds a real reduction
   self-test.
@@ -81,17 +81,20 @@ The parser is a hand-written recursive-descent parser. It supports:
 - `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY` (expressions or ordinals), `LIMIT`,
   and `OFFSET`;
 - arithmetic, comparisons, `AND`/`OR`/`NOT`, `IS [NOT] NULL`;
-- `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`;
+- `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`, `[NOT] LIKE` with `%` and `_`;
 - `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN`, `MAX`.
 
 `IN` and `BETWEEN` are rewritten during parsing into comparisons joined with
 `OR`/`AND`. The rewrites preserve SQL three-valued logic, so `NOT IN` with a
 `NULL` in the list still evaluates to `NULL` rather than a spurious match.
+`LIKE` is evaluated with Arrow's regex kernel: the pattern is escaped, `%`
+becomes `.*`, `_` becomes `.`, and the result is anchored, so a LIKE pattern can
+only mean what SQL LIKE means. The pattern must be a string literal, and a
+backslash is rejected because the two engines disagree about its meaning.
 
 Everything outside that contract is rejected with an error that names the
-construct (`RIGHT`/`FULL`/`CROSS` joins, `JOIN ... USING`, `LIKE`, `NULLS
-FIRST/LAST`, set operations, subqueries, unsupported functions, trailing tokens,
-and so on). The parser never guesses. Keyword expectations check the exact
+construct (`RIGHT`/`FULL`/`CROSS` joins, `JOIN ... USING`, `NULLS FIRST/LAST`,
+set operations, subqueries, unsupported functions, trailing tokens, and so on). The parser never guesses. Keyword expectations check the exact
 keyword, not merely that *some* keyword was found.
 
 The planner performs two high-value optimizations:
@@ -235,31 +238,43 @@ a reviewer can inspect the numbers rather than trusting a summary.
 
 ## 5. Results
 
-Latest run: 1,000,000 sales rows, 16 row groups, 22.5 MB, batch 8,192, AMD
-Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04, NVIDIA
-GeForce RTX 3050 Laptop GPU (4 GB, compute 8.6). The table below is CPU vs
-DuckDB; the GPU runs are in Section 7.3.
+Latest run: 2026-11-12, 1,000,000 sales rows, 16 row groups, 22.5 MB, batch
+8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04,
+CPU-only build. Five timed repetitions after two warm-ups at each scan thread
+count; DuckDB uses its default 16 threads. Every thread count is verified
+against DuckDB before timing. The GPU runs are in Section 7.3 and come from the
+2026-11-09 run, because this one has no CUDA build.
 
-| Query | qe CPU (ms) | DuckDB (ms) | Ratio | Winner |
-|---|---:|---:|---:|---|
-| filter_aggregate | 7.18 | 21.79 | 0.33x | qe |
-| global_aggregate | 63.49 | 47.34 | 1.34x | DuckDB |
-| empty_filter | 0.39 | 10.09 | 0.04x | qe |
-| group_region | 125.89 | 45.91 | 2.74x | DuckDB |
-| group_customer | 260.41 | 114.23 | 2.28x | DuckDB |
-| topk | 118.86 | 64.30 | 1.85x | DuckDB |
-| join_country | 304.51 | 83.27 | 3.66x | DuckDB |
-| count_star | 0.02 | 9.13 | 0.00x | qe |
+| Query | qe 1 thread | qe 4 threads | qe 8 threads | DuckDB | 1-thread ratio | 8-thread ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| filter_aggregate | 4.76 | 5.15 | 4.54 | 19.90 | 0.24x | 0.23x |
+| global_aggregate | 52.27 | 26.61 | 29.64 | 33.58 | 1.56x | 0.88x |
+| empty_filter | 0.09 | 0.07 | 0.11 | 9.40 | 0.01x | 0.01x |
+| group_region | 116.50 | 54.78 | 63.42 | 41.56 | 2.80x | 1.53x |
+| group_customer | 202.56 | 137.65 | 138.89 | 104.21 | 1.94x | 1.33x |
+| topk | 119.14 | 53.38 | 58.54 | 61.41 | 1.94x | 0.95x |
+| join_country | 297.83 | 203.53 | 204.69 | 75.87 | 3.93x | 2.70x |
+| count_star | 0.01 | 0.01 | 0.01 | 7.25 | 0.00x | 0.00x |
 
-These numbers are medians from the committed `latest.json` run. The engine is
-single-threaded while DuckDB uses 16 threads. Absolute times drift between
-sessions: most untouched scan-bound queries and DuckDB itself moved by roughly
-20-40% between the previous commit and this run, and the sub-10 ms filter query
-moved further. Cross-session timings are therefore reported as context, not
-used alone to attribute the aggregation and join changes; the alternating A/B
-runs in Sections 6.2 and 6.3 are the attribution measurements.
+Wins against DuckDB: 3/8 at one thread, 5/8 at four, 5/8 at eight. The parallel
+scan is what moves the story: `global_aggregate` and `topk` cross below 1.0x
+once decode overlaps the single-threaded operator behind it, and the three
+remaining losses are operator-bound rather than scan-bound.
 
-### Why the engine wins three queries
+Four threads matched or beat eight on every scan-bound query. That is the
+expected shape for this dataset: 16 row groups distributed across `N` workers
+leaves two units per worker at eight threads and four at four, while the
+consumer stays serial, so the fifth through eighth readers mostly add memory
+residency and core contention. The scaling limit is the operator pipeline, not
+the decoder, which is the argument for the parallel-operator work in Section 8.
+
+Absolute times drift between sessions: every query here moved against the
+previous committed run, including DuckDB itself, which is why cross-session
+ratios are context rather than attribution. The alternating A/B runs in
+Sections 6.2, 6.3, and 6.4 remain the attribution measurements for the
+individual optimizations.
+
+### Why the engine wins five queries at four threads
 
 Two wins are selective scans. `empty_filter` asks for a date range after the
 end of the data; Parquet statistics prove that no row group can match, so almost
@@ -267,37 +282,39 @@ nothing is read. `filter_aggregate` reads a one-month slice and aggregates it.
 The engine's scan path has very little per-query overhead, while DuckDB still
 pays for its optimizer and execution framework.
 
+Two more are scan-parallel wins rather than operator wins. `topk` (0.87x) and
+`global_aggregate` (0.79x) at four threads each spend most of their single
+threaded time waiting on Parquet decode; overlapping that decode with the sort
+or aggregate behind it is enough to pass DuckDB even though DuckDB's operators
+are vectorized and parallel. This is a statement about this dataset and this
+machine, not about the operators: neither query's operator code changed.
+
 The third win is metadata-only `COUNT(*)`. Both engines avoid decoding the
 table, but the engine's total is a few row-group metadata lookups and a
 zero-column count batch, so `execute_ms` rounds to 0.01 ms. That number measures
 low query overhead rather than scan throughput; it is reported because it is
 real, not because it generalizes.
 
-### Why the engine loses five queries
+### Why the engine still loses three queries
 
-- **`global_aggregate`**: the CPU query now uses the fused batch accumulation
-  described in Section 6.2, but it still scans and aggregates on one thread.
-  DuckDB's vectorized, multi-threaded aggregate is about 1.5x faster. The
-  optional GPU path is compared in Section 7.3; it does not beat DuckDB or
-  reliably beat the CPU.
 - **`group_region` / `group_customer`**: group IDs are built for the whole
-  batch and the aggregates are updated in a fused pass, but the scan and
-  grouping remain single-threaded and the result is materialized and sorted on
-  one thread. DuckDB uses vectorized, multi-threaded hash aggregation. The
-  engine is roughly 2.3-3.1x slower in the committed run.
-- **`join_country`**: the join probe is batch-vectorized for single integer and
-  string keys, but the scan, output materialization, and the following aggregate
-  all still run on one thread, and DuckDB's join pipeline is vectorized and
-  parallel. The gap is 3.7x in the committed run, down from 7.3x before this
-  change (attribution in Section 6.3).
-- **`topk`**: the engine now partitions to the top K before sorting, but it still
-  scans and filters every batch with one thread and hashes no work away. DuckDB
-  combines a parallel scan with its own top-k path; the gap is about 2.0x.
+  batch and the aggregates are updated in a fused pass, but grouping, result
+  materialization, and the final sort all remain single-threaded. At four scan
+  threads the gaps are 1.32x and 1.32x; at eight they are 1.53x and 1.33x. The
+  scan is no longer the explanation, so further progress needs a parallel
+  operator rather than more decode concurrency.
+- **`join_country`**: the probe is batch-vectorized for single integer and
+  string keys, but the probe loop, the per-column `Take` that materializes
+  joined rows, and the following aggregate all run on one thread, while DuckDB's
+  join pipeline is vectorized and parallel. The gap is 2.68x at four threads and
+  2.70x at eight, down from 7.3x before the typed table and probe landed
+  (attribution in Section 6.3). It is the largest remaining loss.
 
-The honest conclusion is the one in the brief: a student-built engine should
-not be expected to beat a mature vectorized engine overall. The value is in the
-three cases where the design choices pay off, and in being able to explain the
-five cases where they do not.
+The honest conclusion is the one in the brief: an engine with a parallel scan
+in front of a single-threaded operator pipeline should not be expected to beat
+a mature vectorized engine overall. The value is in the five cases where the
+design choices pay off, and in being able to explain the three cases where they
+do not.
 
 ## 6. A performance bug found by the benchmark
 
@@ -501,8 +518,10 @@ from the ext4 home directory rather than `/mnt/c`) measured:
 Medians tell the same story (2.7x, 2.1x, 1.7x, 1.1x). The scan-bound queries
 gain most because decode overlaps with the single-threaded aggregate and sort;
 the join query gains least because its serial hash probe and key serialization
-dominate. The committed benchmark JSON still describes the default
-single-threaded scan and was not regenerated.
+dominate. The committed benchmark JSON now records this scaling directly:
+`--scan-threads 1,4,8` times the same verified queries at each worker count, so
+Section 5's table is produced by the harness rather than by comparing the A/B
+run against the default build.
 
 ## 7. GPU status and design
 
@@ -554,49 +573,93 @@ execution engine.
 
 ### 7.3 Measured result
 
-The verified run used the RTX 3050 Laptop GPU (4 GB, compute 8.6, CUDA 12.9.86,
-driver 591.84) on 1,000,000 sales rows. GPU end-to-end times are medians of
-three runs after a warm-up; the CLI self-test ran before timing. Transfer and
-kernel columns are the separately measured CUDA components.
+The first verified run, in an earlier session than Section 7.4, used the RTX 3050
+Laptop GPU (4 GB, compute 8.6, CUDA 12.9.86, driver 591.84) on 1,000,000 sales
+rows. GPU end-to-end times are medians of three runs after a warm-up; the CLI
+self-test ran before timing. Transfer and kernel columns are the separately
+measured CUDA components.
 
 | Query | CPU (ms) | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |
 |---|---:|---:|---:|---:|---:|
 | `filter_aggregate` | 7.18 | 10.11 | 0.217 | 0.050 | 1.41x |
 | `global_aggregate` | 63.49 | 80.57 | 3.179 | 0.629 | 1.27x |
 
-The result is reported without a speedup claim, and the CPU won both queries in
-this run. On `filter_aggregate`, the kernel and transfer are tiny; the 10.11 ms
-end-to-end result versus 7.18 ms on the CPU is within the noise this few-ms
-query shows between local runs, and earlier committed runs had the GPU slightly
-ahead of the CPU on it, so the honest conclusion is a tie at best rather than a
-speedup. On `global_aggregate`, moving `SUM` and `AVG` over one million rows to
-the GPU does not offset the host-side buffering: 80.57 ms versus 63.49 ms on the
-CPU, a 1.27x GPU/CPU ratio. Repeated local runs of the full-table sum straddle
-1.0x, so the honest conclusion is roughly tied at best. DuckDB remains faster on
-both queries because it vectorizes and multi-threads the scan and aggregation;
-at this data size the Parquet scan and host-side work dominate. The GPU is not
-claimed to accelerate queries that spend most of their time decoding Parquet.
+The result is reported without a speedup claim: the CPU won both queries in this
+session. On `filter_aggregate` the kernel and transfer are a fraction of a
+millisecond, so the 10.11 ms end-to-end result against 7.18 ms on the CPU says
+more about per-process catalog and startup overhead on a single-digit-millisecond
+query than about the device, and no fast/slow conclusion should be drawn from
+it. On `global_aggregate`, moving `SUM` and `AVG` over one million rows to the
+device does not offset host-side buffering: 80.57 against 63.49 ms, 1.27x.
+DuckDB remains faster on both queries because it vectorizes and multi-threads
+the scan and aggregation, which at this size dominate. The same-session
+comparison in Section 7.4 reproduced both losses on the 0.3.0 binary and widened
+the global aggregate gap to 1.79x, so this earlier session understated it rather
+than overstating it. The GPU is not claimed to accelerate queries that spend
+most of their time decoding Parquet.
 
-### 7.4 Remaining GPU work
+### 7.4 Scaling to ten million rows
 
-The next useful steps are broader device coverage, not larger claims:
+The open question was whether the GPU path becomes worthwhile once transfers are
+amortized over more rows. On this device it does not. The same binary
+(`build-cuda/qe-cli`, `qe` 0.3.0) measured one and ten million sales rows in one
+session, three repetitions after one warm-up, with every result verified against
+DuckDB before timing. The artifacts are stored in
+`benchmarks/results/gpu_1m_20261112.json` and
+`benchmarks/results/gpu_10m_20261112.json`.
 
-1. Grouped aggregation and GPU filter kernels, starting with low-cardinality
-   group keys and row-group-sized batches.
-2. A GPU scan/decode path or fused filter to avoid paying host decoding cost
+| Rows | Query | CPU (ms) | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |
+|---|---:|---:|---:|---:|---:|---:|
+| 1M | `filter_aggregate` | 6.10 | 9.10 | 0.326 | 0.288 | 1.49x |
+| 1M | `global_aggregate` | 54.58 | 97.81 | 3.966 | 0.602 | 1.79x |
+| 10M | `filter_aggregate` | 35.56 | 34.29 | 0.532 | 0.256 | 0.96x |
+| 10M | `global_aggregate` | 525.70 | 752.87 | 59.265 | 27.872 | 1.43x |
+
+Three things follow from those numbers.
+
+1. **Transfer is not what limits the path.** At ten million rows the transfer and
+   kernel together are 87.1 ms of a 752.87 ms query. The other 665.7 ms is
+   host-side work, so making the data larger cannot fix the ratio.
+2. **The GPU components do not scale linearly.** Transfer grows 14.9x for 10x the
+   data and the kernel grows 46x. That is per-flush and sustained-load clock
+   behaviour on a laptop GPU rather than bandwidth, and it needs its own
+   measurement before any grouped-kernel work is justified.
+3. **The one GPU win is not a speedup claim.** `filter_aggregate` at ten million
+   rows is 34.29 ms against 35.56 ms on the CPU, and DuckDB does the same query
+   in 28.13 ms. A 1.3 ms difference is reported as a measurement, not a win.
+
+This reorders the remaining GPU work. Grouped aggregation would need a
+GPU-resident hash table *and* the removal of the duplicate host pass, and even
+then the CPU scan in front of it costs more than DuckDB's entire query at this
+size: 525.70 ms of the 752.87 ms GPU `global_aggregate` on the host, against
+161.87 ms for all of DuckDB's work. The honest order is to remove the host pass,
+measure kernel scaling in isolation, and only then consider device-side grouping.
+
+### 7.5 Remaining GPU work
+
+The next useful steps are broader device coverage, not larger claims. Section
+7.4 changes their order: the host-side copy and the kernel's scaling come first,
+because they bound what any wider device path could win.
+
+1. Remove the duplicate host pass: share one buffer between `SUM` and `AVG` over
+   the same argument, and push Arrow buffers to the device instead of copying
+   them into a `std::vector<double>` first.
+2. Measure a kernel-only reduction at several sizes to explain the 46x kernel
+   growth between one and ten million rows.
+3. Grouped aggregation and GPU filter kernels, starting with low-cardinality
+   group keys and row-group-sized batches, after items 1 and 2.
+4. A GPU scan/decode path or fused filter to avoid paying host decoding cost
    before a transfer; without it, global aggregates remain scan-bound.
-3. Async, pinned transfers and overlap with host decoding instead of the current
+5. Async, pinned transfers and overlap with host decoding instead of the current
    chunk-level copy/kernel/copy sequence.
-4. Integer aggregate types, `MIN`/`MAX`, and joins.
-5. A shared buffer for `SUM` and `AVG` over the same argument, which would
-   remove the duplicate host pass visible in `global_aggregate`.
+6. Integer aggregate types, `MIN`/`MAX`, and joins.
 
 Those paths are intentionally not claimed until they can be measured on the
 same verified device.
 
 ## 8. Limits and version 2 ideas
 
-Known 0.2.0 limits:
+Known 0.3.0 limits:
 
 - read-only, single-process; operators other than the scan are
   single-threaded, and the scan decodes row groups in parallel only with
@@ -604,8 +667,9 @@ Known 0.2.0 limits:
 - flat schemas only; nested Parquet types are rejected at catalog load;
 - inner and left joins only, with equality keys whose Arrow types must match
   exactly; no right, full, cross, semi, or anti joins;
-- no `LIKE`, `NULLS FIRST/LAST`, `UNION`/`EXCEPT`/`INTERSECT`, subqueries, CTEs,
-  or window functions;
+- no `NULLS FIRST/LAST`, `UNION`/`EXCEPT`/`INTERSECT`, subqueries, CTEs, or
+  window functions; `LIKE` supports `%` and `_` and rejects patterns containing
+  a backslash, and a pattern must be a string literal;
 - no `DISTINCT` inside aggregates, no aggregate arguments that are expressions,
   and no `GROUP BY` expressions;
 - in-memory sort and aggregation, with no spilling;
@@ -619,12 +683,17 @@ Known 0.2.0 limits:
 Version 2 work still open, in priority order:
 
 1. Parallel operators beyond the scan: join build/probe, aggregation, sort,
-   and the executor loop itself.
+   and the executor loop itself. The 0.3.0 scan-thread measurements make this
+   the priority and also pick the target: at four scan threads the three
+   remaining losses are operator-bound (1.32x, 1.32x, 2.68x) and the join is the
+   largest, so parallel aggregation alone would not move the worst case.
 2. CUDA grouped aggregation, filter kernels, and joins, with separate
    transfer/kernel timers and CPU fallback; the global floating-point path is
-   implemented and measured.
+   implemented and measured, and Section 7.4 argues the host-side copy has to
+   go first.
 3. Remaining join types and join-key type coercion.
-4. `LIKE`, set operations, subqueries, CTEs, and window functions.
+4. Set operations, subqueries, CTEs, and window functions, then broader `LIKE`
+   (a column pattern or an `ESCAPE` clause).
 5. Aggregate expressions, `DISTINCT` aggregates, and `GROUP BY` expressions.
 6. Memory accounting and spilling for sorts and aggregations.
 7. Additional Parquet encodings and nested-type support.

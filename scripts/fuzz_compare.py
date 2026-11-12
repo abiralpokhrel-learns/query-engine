@@ -104,6 +104,7 @@ def _sales_predicate(rng: random.Random, prefix: str = "") -> str:
                 f"{p}region <> '{value}'",
                 f"{p}region IN ('{value}', '{rng.choice(REGIONS)}')",
                 f"{p}region IS NOT NULL",
+                f"{p}region LIKE '{value[:4]}%'",
             ]
         )
     if column == "channel":
