@@ -1,0 +1,1484 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-12T15:14:42.129300+00:00",
+  "status": "completed_cpu_and_gpu",
+  "engine": {
+    "version_text": [
+      "qe-cli 0.3.0",
+      "arrow: 13.0.0",
+      "cuda: enabled (NVIDIA GeForce RTX 3050 Laptop GPU, 4095 MiB, compute 8.6, cuda_driver_api=13.1)",
+      "cuda_ops: global-aggregate"
+    ],
+    "name": "qe-cli",
+    "version": "0.3.0",
+    "cuda": true,
+    "cuda_line": "cuda: enabled (NVIDIA GeForce RTX 3050 Laptop GPU, 4095 MiB, compute 8.6, cuda_driver_api=13.1)",
+    "cuda_device": "NVIDIA GeForce RTX 3050 Laptop GPU, 4095 MiB, compute 8.6, cuda_driver_api=13.1"
+  },
+  "gpu": {
+    "available": true,
+    "gpus": [
+      {
+        "name": "NVIDIA GeForce RTX 3050 Laptop GPU",
+        "memory": "4096 MiB",
+        "driver": "591.84"
+      }
+    ]
+  },
+  "environment": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "system": "Linux",
+    "release": "6.18.33.2-microsoft-standard-WSL2",
+    "machine": "x86_64",
+    "processor": "AMD Ryzen 7 170 with Radeon Graphics",
+    "memory": "7.4 GiB",
+    "wsl_distro": "Ubuntu-24.04",
+    "python": "3.12.16",
+    "numpy": "1.26.4",
+    "pyarrow": "13.0.0",
+    "duckdb": "2.0.0"
+  },
+  "dataset": {
+    "generated_at": "2026-11-12T15:12:43.122942+00:00",
+    "seed": 20261031,
+    "row_group_size": 65536,
+    "compression": "snappy",
+    "start_date": "2024-01-01",
+    "days": 1095,
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.16",
+    "pyarrow": "13.0.0",
+    "numpy": "1.26.4",
+    "duckdb": "2.0.0",
+    "tables": {
+      "customers": {
+        "path": "customers.parquet",
+        "rows": 50000,
+        "columns": [
+          {
+            "name": "customer_id",
+            "type": "int64"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "segment",
+            "type": "string"
+          },
+          {
+            "name": "country",
+            "type": "string"
+          },
+          {
+            "name": "signup_date",
+            "type": "date32[day]"
+          }
+        ],
+        "row_groups": 1,
+        "file_bytes": 772111
+      },
+      "products": {
+        "path": "products.parquet",
+        "rows": 5000,
+        "columns": [
+          {
+            "name": "product_id",
+            "type": "int64"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "unit_price",
+            "type": "double"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          }
+        ],
+        "row_groups": 1,
+        "file_bytes": 57406
+      },
+      "sales": {
+        "path": "sales.parquet",
+        "rows": 10000000,
+        "columns": [
+          {
+            "name": "sale_id",
+            "type": "int64"
+          },
+          {
+            "name": "customer_id",
+            "type": "int64"
+          },
+          {
+            "name": "product_id",
+            "type": "int64"
+          },
+          {
+            "name": "region",
+            "type": "string"
+          },
+          {
+            "name": "channel",
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "int64"
+          },
+          {
+            "name": "unit_price",
+            "type": "double"
+          },
+          {
+            "name": "discount",
+            "type": "double"
+          },
+          {
+            "name": "amount",
+            "type": "double"
+          },
+          {
+            "name": "sale_date",
+            "type": "date32[day]"
+          }
+        ],
+        "row_groups": 153,
+        "file_bytes": 224247358
+      },
+      "edge_cases": {
+        "path": "edge_cases.parquet",
+        "rows": 6,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "category",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "double"
+          },
+          {
+            "name": "quantity",
+            "type": "int64"
+          },
+          {
+            "name": "flag",
+            "type": "bool"
+          },
+          {
+            "name": "day",
+            "type": "date32[day]"
+          },
+          {
+            "name": "label",
+            "type": "string"
+          }
+        ],
+        "row_groups": 1,
+        "file_bytes": 2537
+      },
+      "edge_left": {
+        "path": "edge_left.parquet",
+        "rows": 6,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "left_value",
+            "type": "string"
+          }
+        ],
+        "row_groups": 1,
+        "file_bytes": 932
+      },
+      "edge_right": {
+        "path": "edge_right.parquet",
+        "rows": 5,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "right_value",
+            "type": "string"
+          }
+        ],
+        "row_groups": 1,
+        "file_bytes": 929
+      },
+      "multi_left": {
+        "path": "multi_left.parquet",
+        "rows": 6,
+        "columns": [
+          {
+            "name": "a",
+            "type": "int64"
+          },
+          {
+            "name": "b",
+            "type": "int64"
+          },
+          {
+            "name": "left_value",
+            "type": "string"
+          }
+        ],
+        "row_groups": 1,
+        "file_bytes": 1295
+      },
+      "multi_right": {
+        "path": "multi_right.parquet",
+        "rows": 6,
+        "columns": [
+          {
+            "name": "a",
+            "type": "int64"
+          },
+          {
+            "name": "b",
+            "type": "int64"
+          },
+          {
+            "name": "right_value",
+            "type": "string"
+          }
+        ],
+        "row_groups": 1,
+        "file_bytes": 1298
+      },
+      "empty_table": {
+        "path": "empty_table.parquet",
+        "rows": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "value",
+            "type": "double"
+          }
+        ],
+        "row_groups": 1,
+        "file_bytes": 564
+      }
+    }
+  },
+  "config": {
+    "batch_size": 8192,
+    "repeats": 3,
+    "warmups": 1,
+    "duckdb_threads": 16,
+    "cpu_threads": 1,
+    "scan_threads": [
+      1
+    ],
+    "gpu_requested": true,
+    "gpu_available": true,
+    "timer": "CLI internal execute_ms (scan open through result materialization)",
+    "duckdb_timer": "Python client execute + fetchall in the same process",
+    "data_dir": "/mnt/c/query engine/data/bench10m"
+  },
+  "queries": [
+    {
+      "id": "filter_aggregate",
+      "description": "One-month date range; row-group skipping plus COUNT/SUM.",
+      "sql": "SELECT COUNT(*), SUM(amount) FROM sales WHERE sale_date >= '2025-01-01' AND sale_date < '2025-02-01'",
+      "regression_check": true,
+      "verified": true,
+      "row_count": 1,
+      "columns": [
+        {
+          "name": "count(*)",
+          "type": "int64"
+        },
+        {
+          "name": "sum(sales.amount)",
+          "type": "double"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          38.429,
+          32.347,
+          34.286
+        ],
+        "median_ms": 34.286,
+        "min_ms": 32.347,
+        "max_ms": 38.429,
+        "parse_ms": 0.688,
+        "plan_ms": 0.052,
+        "catalog_ms": 10.957,
+        "batch_size": 8192,
+        "transfer_ms": 0.532,
+        "kernel_ms": 0.256,
+        "gpu": {
+          "used": true,
+          "batches": 1,
+          "transfer_ms": 0.532,
+          "kernel_ms": 0.256,
+          "reason": null
+        },
+        "gpu_used": true,
+        "gpu_batches": 1,
+        "gpu_reason": null
+      },
+      "verification_by_threads": {
+        "1": {
+          "verified": true,
+          "row_count": 1,
+          "columns": [
+            {
+              "name": "count(*)",
+              "type": "int64"
+            },
+            {
+              "name": "sum(sales.amount)",
+              "type": "double"
+            }
+          ],
+          "gpu": null
+        }
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": true,
+          "batches": 1,
+          "transfer_ms": 0.582,
+          "kernel_ms": 0.093,
+          "reason": null
+        }
+      },
+      "scan_threads": {
+        "1": {
+          "runs_ms": [
+            43.618,
+            35.56,
+            30.82
+          ],
+          "median_ms": 35.56,
+          "min_ms": 30.82,
+          "max_ms": 43.618,
+          "parse_ms": 1.136,
+          "plan_ms": 0.135,
+          "catalog_ms": 16.68,
+          "batch_size": 8192,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "gpu": null,
+          "gpu_used": false,
+          "gpu_batches": 0,
+          "gpu_reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          43.618,
+          35.56,
+          30.82
+        ],
+        "median_ms": 35.56,
+        "min_ms": 30.82,
+        "max_ms": 43.618,
+        "parse_ms": 1.136,
+        "plan_ms": 0.135,
+        "catalog_ms": 16.68,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          28.129203,
+          26.92402,
+          33.203078
+        ],
+        "median_ms": 28.129203,
+        "min_ms": 26.92402,
+        "max_ms": 33.203078,
+        "threads": 16
+      },
+      "gpu_reason": null
+    },
+    {
+      "id": "global_aggregate",
+      "description": "Full-table global COUNT/SUM/AVG; exercises the optional CUDA aggregate path.",
+      "sql": "SELECT COUNT(*), SUM(amount), AVG(amount) FROM sales",
+      "regression_check": false,
+      "verified": true,
+      "row_count": 1,
+      "columns": [
+        {
+          "name": "count(*)",
+          "type": "int64"
+        },
+        {
+          "name": "sum(sales.amount)",
+          "type": "double"
+        },
+        {
+          "name": "avg(sales.amount)",
+          "type": "double"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          752.873,
+          659.908,
+          799.672
+        ],
+        "median_ms": 752.873,
+        "min_ms": 659.908,
+        "max_ms": 799.672,
+        "parse_ms": 0.82,
+        "plan_ms": 0.075,
+        "catalog_ms": 10.856,
+        "batch_size": 8192,
+        "transfer_ms": 59.265,
+        "kernel_ms": 27.872,
+        "gpu": {
+          "used": true,
+          "batches": 20,
+          "transfer_ms": 59.265,
+          "kernel_ms": 27.872,
+          "reason": null
+        },
+        "gpu_used": true,
+        "gpu_batches": 20,
+        "gpu_reason": null
+      },
+      "verification_by_threads": {
+        "1": {
+          "verified": true,
+          "row_count": 1,
+          "columns": [
+            {
+              "name": "count(*)",
+              "type": "int64"
+            },
+            {
+              "name": "sum(sales.amount)",
+              "type": "double"
+            },
+            {
+              "name": "avg(sales.amount)",
+              "type": "double"
+            }
+          ],
+          "gpu": null
+        }
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "avg(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": true,
+          "batches": 20,
+          "transfer_ms": 33.918,
+          "kernel_ms": 6.284,
+          "reason": null
+        }
+      },
+      "scan_threads": {
+        "1": {
+          "runs_ms": [
+            504.691,
+            525.7,
+            542.024
+          ],
+          "median_ms": 525.7,
+          "min_ms": 504.691,
+          "max_ms": 542.024,
+          "parse_ms": 0.672,
+          "plan_ms": 0.052,
+          "catalog_ms": 10.529,
+          "batch_size": 8192,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "gpu": null,
+          "gpu_used": false,
+          "gpu_batches": 0,
+          "gpu_reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          504.691,
+          525.7,
+          542.024
+        ],
+        "median_ms": 525.7,
+        "min_ms": 504.691,
+        "max_ms": 542.024,
+        "parse_ms": 0.672,
+        "plan_ms": 0.052,
+        "catalog_ms": 10.529,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          161.874159,
+          159.30767,
+          190.350865
+        ],
+        "median_ms": 161.874159,
+        "min_ms": 159.30767,
+        "max_ms": 190.350865,
+        "threads": 16
+      },
+      "gpu_reason": null
+    },
+    {
+      "id": "empty_filter",
+      "description": "Date range after the data; all row groups can be skipped.",
+      "sql": "SELECT COUNT(*), SUM(amount) FROM sales WHERE sale_date > '2030-01-01'",
+      "regression_check": true,
+      "verified": true,
+      "row_count": 1,
+      "columns": [
+        {
+          "name": "count(*)",
+          "type": "int64"
+        },
+        {
+          "name": "sum(sales.amount)",
+          "type": "double"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          5.728,
+          0.931,
+          0.982
+        ],
+        "median_ms": 0.982,
+        "min_ms": 0.931,
+        "max_ms": 5.728,
+        "parse_ms": 0.616,
+        "plan_ms": 0.056,
+        "catalog_ms": 10.995,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "verification_by_threads": {
+        "1": {
+          "verified": true,
+          "row_count": 1,
+          "columns": [
+            {
+              "name": "count(*)",
+              "type": "int64"
+            },
+            {
+              "name": "sum(sales.amount)",
+              "type": "double"
+            }
+          ],
+          "gpu": null
+        }
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "scan_threads": {
+        "1": {
+          "runs_ms": [
+            6.6,
+            0.815,
+            0.697
+          ],
+          "median_ms": 0.815,
+          "min_ms": 0.697,
+          "max_ms": 6.6,
+          "parse_ms": 0.722,
+          "plan_ms": 0.113,
+          "catalog_ms": 12.492,
+          "batch_size": 8192,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "gpu": null,
+          "gpu_used": false,
+          "gpu_batches": 0,
+          "gpu_reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          6.6,
+          0.815,
+          0.697
+        ],
+        "median_ms": 0.815,
+        "min_ms": 0.697,
+        "max_ms": 6.6,
+        "parse_ms": 0.722,
+        "plan_ms": 0.113,
+        "catalog_ms": 12.492,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          15.568698,
+          15.383539,
+          15.461189
+        ],
+        "median_ms": 15.461189,
+        "min_ms": 15.383539,
+        "max_ms": 15.568698,
+        "threads": 16
+      },
+      "gpu_reason": "no-supported-gpu-operator"
+    },
+    {
+      "id": "group_region",
+      "description": "Low-cardinality GROUP BY with five aggregates.",
+      "sql": "SELECT region, COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales GROUP BY region ORDER BY region",
+      "regression_check": true,
+      "verified": true,
+      "row_count": 9,
+      "columns": [
+        {
+          "name": "region",
+          "type": "string"
+        },
+        {
+          "name": "count(*)",
+          "type": "int64"
+        },
+        {
+          "name": "sum(sales.amount)",
+          "type": "double"
+        },
+        {
+          "name": "avg(sales.amount)",
+          "type": "double"
+        },
+        {
+          "name": "min(sales.amount)",
+          "type": "double"
+        },
+        {
+          "name": "max(sales.amount)",
+          "type": "double"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          1507.483,
+          1108.992,
+          1268.292
+        ],
+        "median_ms": 1268.292,
+        "min_ms": 1108.992,
+        "max_ms": 1507.483,
+        "parse_ms": 0.932,
+        "plan_ms": 0.074,
+        "catalog_ms": 12.007,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "verification_by_threads": {
+        "1": {
+          "verified": true,
+          "row_count": 9,
+          "columns": [
+            {
+              "name": "region",
+              "type": "string"
+            },
+            {
+              "name": "count(*)",
+              "type": "int64"
+            },
+            {
+              "name": "sum(sales.amount)",
+              "type": "double"
+            },
+            {
+              "name": "avg(sales.amount)",
+              "type": "double"
+            },
+            {
+              "name": "min(sales.amount)",
+              "type": "double"
+            },
+            {
+              "name": "max(sales.amount)",
+              "type": "double"
+            }
+          ],
+          "gpu": null
+        }
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 9,
+        "columns": [
+          {
+            "name": "region",
+            "type": "string"
+          },
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "avg(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "min(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "max(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "scan_threads": {
+        "1": {
+          "runs_ms": [
+            1361.714,
+            1214.49,
+            1158.938
+          ],
+          "median_ms": 1214.49,
+          "min_ms": 1158.938,
+          "max_ms": 1361.714,
+          "parse_ms": 1.031,
+          "plan_ms": 0.464,
+          "catalog_ms": 11.227,
+          "batch_size": 8192,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "gpu": null,
+          "gpu_used": false,
+          "gpu_batches": 0,
+          "gpu_reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          1361.714,
+          1214.49,
+          1158.938
+        ],
+        "median_ms": 1214.49,
+        "min_ms": 1158.938,
+        "max_ms": 1361.714,
+        "parse_ms": 1.031,
+        "plan_ms": 0.464,
+        "catalog_ms": 11.227,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          206.798723,
+          209.800806,
+          192.026889
+        ],
+        "median_ms": 206.798723,
+        "min_ms": 192.026889,
+        "max_ms": 209.800806,
+        "threads": 16
+      },
+      "gpu_reason": "no-supported-gpu-operator"
+    },
+    {
+      "id": "group_customer",
+      "description": "High-cardinality GROUP BY (one group per customer).",
+      "sql": "SELECT customer_id, COUNT(*), SUM(amount), AVG(amount) FROM sales GROUP BY customer_id ORDER BY customer_id",
+      "regression_check": true,
+      "verified": true,
+      "row_count": 50001,
+      "columns": [
+        {
+          "name": "customer_id",
+          "type": "int64"
+        },
+        {
+          "name": "count(*)",
+          "type": "int64"
+        },
+        {
+          "name": "sum(sales.amount)",
+          "type": "double"
+        },
+        {
+          "name": "avg(sales.amount)",
+          "type": "double"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          1745.787,
+          1831.422,
+          1769.193
+        ],
+        "median_ms": 1769.193,
+        "min_ms": 1745.787,
+        "max_ms": 1831.422,
+        "parse_ms": 0.818,
+        "plan_ms": 0.099,
+        "catalog_ms": 11.118,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "verification_by_threads": {
+        "1": {
+          "verified": true,
+          "row_count": 50001,
+          "columns": [
+            {
+              "name": "customer_id",
+              "type": "int64"
+            },
+            {
+              "name": "count(*)",
+              "type": "int64"
+            },
+            {
+              "name": "sum(sales.amount)",
+              "type": "double"
+            },
+            {
+              "name": "avg(sales.amount)",
+              "type": "double"
+            }
+          ],
+          "gpu": null
+        }
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 50001,
+        "columns": [
+          {
+            "name": "customer_id",
+            "type": "int64"
+          },
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(sales.amount)",
+            "type": "double"
+          },
+          {
+            "name": "avg(sales.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "scan_threads": {
+        "1": {
+          "runs_ms": [
+            1803.869,
+            1828.953,
+            1821.656
+          ],
+          "median_ms": 1821.656,
+          "min_ms": 1803.869,
+          "max_ms": 1828.953,
+          "parse_ms": 0.625,
+          "plan_ms": 0.076,
+          "catalog_ms": 11.136,
+          "batch_size": 8192,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "gpu": null,
+          "gpu_used": false,
+          "gpu_batches": 0,
+          "gpu_reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          1803.869,
+          1828.953,
+          1821.656
+        ],
+        "median_ms": 1821.656,
+        "min_ms": 1803.869,
+        "max_ms": 1828.953,
+        "parse_ms": 0.625,
+        "plan_ms": 0.076,
+        "catalog_ms": 11.136,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          627.47035,
+          614.488436,
+          533.538363
+        ],
+        "median_ms": 614.488436,
+        "min_ms": 533.538363,
+        "max_ms": 627.47035,
+        "threads": 16
+      },
+      "gpu_reason": "no-supported-gpu-operator"
+    },
+    {
+      "id": "topk",
+      "description": "Selective filter, top-k sort, then LIMIT.",
+      "sql": "SELECT sale_id, amount FROM sales WHERE amount > 1000 ORDER BY amount DESC LIMIT 100",
+      "regression_check": true,
+      "verified": true,
+      "row_count": 100,
+      "columns": [
+        {
+          "name": "sale_id",
+          "type": "int64"
+        },
+        {
+          "name": "amount",
+          "type": "double"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          1127.5,
+          1153.129,
+          1179.338
+        ],
+        "median_ms": 1153.129,
+        "min_ms": 1127.5,
+        "max_ms": 1179.338,
+        "parse_ms": 0.836,
+        "plan_ms": 0.055,
+        "catalog_ms": 12.918,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "verification_by_threads": {
+        "1": {
+          "verified": true,
+          "row_count": 100,
+          "columns": [
+            {
+              "name": "sale_id",
+              "type": "int64"
+            },
+            {
+              "name": "amount",
+              "type": "double"
+            }
+          ],
+          "gpu": null
+        }
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 100,
+        "columns": [
+          {
+            "name": "sale_id",
+            "type": "int64"
+          },
+          {
+            "name": "amount",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "scan_threads": {
+        "1": {
+          "runs_ms": [
+            1284.492,
+            1172.577,
+            1191.927
+          ],
+          "median_ms": 1191.927,
+          "min_ms": 1172.577,
+          "max_ms": 1284.492,
+          "parse_ms": 0.705,
+          "plan_ms": 0.045,
+          "catalog_ms": 11.373,
+          "batch_size": 8192,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "gpu": null,
+          "gpu_used": false,
+          "gpu_batches": 0,
+          "gpu_reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          1284.492,
+          1172.577,
+          1191.927
+        ],
+        "median_ms": 1191.927,
+        "min_ms": 1172.577,
+        "max_ms": 1284.492,
+        "parse_ms": 0.705,
+        "plan_ms": 0.045,
+        "catalog_ms": 11.373,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          375.752611,
+          366.826067,
+          365.11033
+        ],
+        "median_ms": 366.826067,
+        "min_ms": 365.11033,
+        "max_ms": 375.752611,
+        "threads": 16
+      },
+      "gpu_reason": "no-supported-gpu-operator"
+    },
+    {
+      "id": "join_country",
+      "description": "Hash join against customers, then aggregate by country.",
+      "sql": "SELECT c.country, COUNT(*), SUM(s.amount) FROM sales s JOIN customers c ON s.customer_id = c.customer_id GROUP BY c.country ORDER BY c.country",
+      "regression_check": true,
+      "verified": true,
+      "row_count": 8,
+      "columns": [
+        {
+          "name": "country",
+          "type": "string"
+        },
+        {
+          "name": "count(*)",
+          "type": "int64"
+        },
+        {
+          "name": "sum(s.amount)",
+          "type": "double"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          2854.18,
+          2884.856,
+          2889.535
+        ],
+        "median_ms": 2884.856,
+        "min_ms": 2854.18,
+        "max_ms": 2889.535,
+        "parse_ms": 0.744,
+        "plan_ms": 0.064,
+        "catalog_ms": 12.254,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "verification_by_threads": {
+        "1": {
+          "verified": true,
+          "row_count": 8,
+          "columns": [
+            {
+              "name": "country",
+              "type": "string"
+            },
+            {
+              "name": "count(*)",
+              "type": "int64"
+            },
+            {
+              "name": "sum(s.amount)",
+              "type": "double"
+            }
+          ],
+          "gpu": null
+        }
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 8,
+        "columns": [
+          {
+            "name": "country",
+            "type": "string"
+          },
+          {
+            "name": "count(*)",
+            "type": "int64"
+          },
+          {
+            "name": "sum(s.amount)",
+            "type": "double"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "scan_threads": {
+        "1": {
+          "runs_ms": [
+            2997.423,
+            3074.303,
+            2959.609
+          ],
+          "median_ms": 2997.423,
+          "min_ms": 2959.609,
+          "max_ms": 3074.303,
+          "parse_ms": 0.886,
+          "plan_ms": 0.095,
+          "catalog_ms": 16.194,
+          "batch_size": 8192,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "gpu": null,
+          "gpu_used": false,
+          "gpu_batches": 0,
+          "gpu_reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          2997.423,
+          3074.303,
+          2959.609
+        ],
+        "median_ms": 2997.423,
+        "min_ms": 2959.609,
+        "max_ms": 3074.303,
+        "parse_ms": 0.886,
+        "plan_ms": 0.095,
+        "catalog_ms": 16.194,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          506.160552,
+          465.599952,
+          444.398835
+        ],
+        "median_ms": 465.599952,
+        "min_ms": 444.398835,
+        "max_ms": 506.160552,
+        "threads": 16
+      },
+      "gpu_reason": "no-supported-gpu-operator"
+    },
+    {
+      "id": "count_star",
+      "description": "Full-table COUNT(*) answered from Parquet metadata by both engines.",
+      "sql": "SELECT COUNT(*) FROM sales",
+      "regression_check": true,
+      "verified": true,
+      "row_count": 1,
+      "columns": [
+        {
+          "name": "count(*)",
+          "type": "int64"
+        }
+      ],
+      "gpu": {
+        "runs_ms": [
+          2.013,
+          0.025,
+          0.014
+        ],
+        "median_ms": 0.025,
+        "min_ms": 0.014,
+        "max_ms": 2.013,
+        "parse_ms": 0.544,
+        "plan_ms": 0.041,
+        "catalog_ms": 9.839,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        },
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": "no-supported-gpu-operator"
+      },
+      "verification_by_threads": {
+        "1": {
+          "verified": true,
+          "row_count": 1,
+          "columns": [
+            {
+              "name": "count(*)",
+              "type": "int64"
+            }
+          ],
+          "gpu": null
+        }
+      },
+      "gpu_verification": {
+        "verified": true,
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "count(*)",
+            "type": "int64"
+          }
+        ],
+        "gpu": {
+          "used": false,
+          "batches": 0,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "reason": "no-supported-gpu-operator"
+        }
+      },
+      "scan_threads": {
+        "1": {
+          "runs_ms": [
+            2.468,
+            0.042,
+            0.025
+          ],
+          "median_ms": 0.042,
+          "min_ms": 0.025,
+          "max_ms": 2.468,
+          "parse_ms": 0.716,
+          "plan_ms": 0.057,
+          "catalog_ms": 12.67,
+          "batch_size": 8192,
+          "transfer_ms": null,
+          "kernel_ms": null,
+          "gpu": null,
+          "gpu_used": false,
+          "gpu_batches": 0,
+          "gpu_reason": null
+        }
+      },
+      "cpu": {
+        "runs_ms": [
+          2.468,
+          0.042,
+          0.025
+        ],
+        "median_ms": 0.042,
+        "min_ms": 0.025,
+        "max_ms": 2.468,
+        "parse_ms": 0.716,
+        "plan_ms": 0.057,
+        "catalog_ms": 12.67,
+        "batch_size": 8192,
+        "transfer_ms": null,
+        "kernel_ms": null,
+        "gpu": null,
+        "gpu_used": false,
+        "gpu_batches": 0,
+        "gpu_reason": null
+      },
+      "duckdb": {
+        "runs_ms": [
+          13.778298,
+          13.526813,
+          14.04048
+        ],
+        "median_ms": 13.778298,
+        "min_ms": 13.526813,
+        "max_ms": 14.04048,
+        "threads": 16
+      },
+      "gpu_reason": "no-supported-gpu-operator"
+    }
+  ],
+  "summary": {
+    "cpu_wins": 2,
+    "duckdb_wins": 6,
+    "ties": 0,
+    "gpu_available": true,
+    "gpu_requested": true,
+    "gpu_queries": 2,
+    "gpu_wins": 1,
+    "cpu_wins_over_gpu": 1,
+    "gpu_ties": 0
+  }
+}
