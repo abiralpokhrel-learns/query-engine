@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Optional parallel scan: `--threads N` decodes Parquet row groups concurrently.
+  Worker `w` owns row groups `w, w+N, ...`, each worker opens its own Parquet
+  reader, and batches are emitted in exactly the serial order with a fixed
+  `2N`-token buffer budget, so results and scan statistics are identical at any
+  thread count. An alternating same-session A/B on the 1M-row dataset
+  (7 rounds, min-vs-min, `--threads 8` vs `--threads 1`) measured 2.9x on the
+  top-k query, 1.95x on `GROUP BY region`, 1.8x on the global aggregate, and
+  1.2x on the join aggregate; the committed benchmark JSON is unchanged and
+  still describes the default single-threaded scan.
 - Contributor guide, pull-request checklist, and issue templates.
 - `clang-format` and `ruff` configuration, with format checks in CI.
 - ASan/UBSan CI job, warnings-as-errors builds, coverage reporting, and a
@@ -74,6 +83,15 @@ principles in C++20.
 
 ### Fixed
 
+- The vectorized aggregate fast path mis-summed any batch whose value arrays
+  carried a nonzero slice offset: `raw_values()` already includes the Arrow
+  offset, and the accumulation loops added it a second time, so `SUM`, `AVG`,
+  and `MIN`/`MAX` arguments read shifted values. Serial scans always emitted
+  offset-zero batches, which is why the differential suite never caught it; the
+  new parallel scan produces sliced batches and its new thread-invariance tests
+  exposed the bug. Value pointers are now resolved offset-exclusively, and the
+  thread-invariance, statistics-parity, and metadata-`COUNT` tests cover the
+  aggregate on sliced batches.
 - Parser keyword expectations now require the exact keyword rather than any
   keyword token, rejecting malformed clauses such as `BETWEEN 1 OR 2`.
 - Fuzz reporting now shows the correct pass count when a run stops early.

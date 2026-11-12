@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 <p align="center">
-  <img src="docs/assets/qe-cosmos-hero.gif" alt="qe — a columnar query engine, built from scratch. 182 tests, 1M rows, wins and losses both shown." width="100%">
+  <img src="docs/assets/qe-cosmos-hero.gif" alt="qe — a columnar query engine, built from scratch. Hundreds of tests, 1M rows, wins and losses both shown." width="100%">
 </p>
 
 A small SQL query engine built from first principles in C++20. It reads Apache
@@ -21,8 +21,10 @@ from that stored data.
 complete, and selected version 2 work is now implemented: `DISTINCT`,
 `HAVING`, `LEFT JOIN`, `IN` / `BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a
 top-k sort for `ORDER BY ... LIMIT`, an opt-in CUDA build for global
-aggregates, batch-vectorized hash aggregation, and batch-vectorized single-key
-hash joins. All 182 tests (173 CPU correctness tests plus 9 GPU-gated tests
+aggregates, batch-vectorized hash aggregation, batch-vectorized single-key
+hash joins, and an opt-in parallel scan (`--threads`) that decodes Parquet row
+groups concurrently while preserving the exact serial output order. All 194
+tests (185 CPU correctness tests plus 9 GPU-gated tests
 that skip on CPU-only builds) pass against DuckDB on generated edge-case
 datasets,
 the C++ parser suite passes, and the differential fuzzer matches DuckDB on
@@ -59,6 +61,11 @@ multi-seed sweeps. Every benchmark query is verified against DuckDB on the
 - **Batch-vectorized joins.** Single-key integer and string joins probe an
   open-addressed table with inline matching instead of serializing a key string
   per row; the same-session A/B below runs `join_country` about 1.8x faster.
+- **Opt-in parallel scan.** `--threads N` decodes row groups concurrently with
+  one Parquet reader per worker and emits batches in the exact serial order,
+  bounded by a fixed token budget; results and scan statistics never depend on
+  the thread count. In a same-session alternating A/B on the 1M-row dataset it
+  roughly halves the scan-bound `GROUP BY` and top-k queries.
 - **Performance claims with receipts.** Every benchmark query is verified before
   timing; raw runs, hardware, versions, and query text live in committed JSON,
   and the chart is regenerated from that file. Wins and losses are both reported.
@@ -147,6 +154,8 @@ Options:
   --max-rows N          Maximum result rows to display; -1 shows all.
                         Defaults to 50 for tables and all for JSON.
   --batch-size N        Vectorized batch size (default: 8192).
+  --threads N           Parallel scan workers for row-group decoding
+                        (default: 1). Results never depend on this.
   --explain             Print the optimized plan and do not execute.
   --repeat N            Execute the query N times and report the last result.
   --gpu                 Use the optional CUDA global-aggregate path where
@@ -249,6 +258,16 @@ the smaller join input as the build side, and inserts projections only where the
 output schema requires them. `--explain` prints the optimized plan, including
 pushed predicates and the columns read from each file.
 
+With `--threads N` (default 1) the scan decodes row groups concurrently.
+Worker `w` owns the row groups at positions `w, w+N, ...`, each worker opens its
+own Parquet reader, and a fully decoded, filtered row group is buffered until
+the consumer reaches it. Batches are emitted strictly in row-group order — the
+order the serial scan produces — and a fixed budget of `2N` decode tokens bounds
+how many row groups may sit in memory at once. Because slicing, filtering, and
+the skip of empty slices mirror the serial loop exactly, results and scan
+statistics are identical at any thread count; operators downstream of the scan
+stay single-threaded.
+
 <details>
 <summary>Example <code>--explain</code> output for the demo query</summary>
 
@@ -286,6 +305,9 @@ Parquet files, including:
 - row-group skipping and column pruning asserted from `--explain` and scan stats;
 - metadata-only `COUNT(*)` and the empty plan it produces;
 - identical results across batch sizes 1, 7, 128, and 8,192;
+- identical results across scan thread counts 1, 2, 4, and 8, including
+  threads × batch-size combinations, and identical scan statistics between the
+  serial and parallel scans;
 - on CUDA builds, GPU `COUNT`/`SUM`/`AVG` results against DuckDB, tiny-batch
   input handling, and CPU fallback for unsupported aggregates and grouping.
 
@@ -297,7 +319,7 @@ the supported subset, runs each against this engine and DuckDB, and compares
 every value; a 30-query sample is part of every pytest run.
 
 ```bash
-python -m pytest tests -q                     # 182 tests; 9 GPU tests skip without a device
+python -m pytest tests -q                     # 194 tests; 9 GPU tests skip without a device
 ctest --test-dir build --output-on-failure    # parser/unit tests
 ctest --test-dir build-cuda --output-on-failure  # parser + CUDA device self-test
 python scripts/fuzz_compare.py --queries 1000 --seed 2026
@@ -329,7 +351,9 @@ QE_CLI=build-cuda/qe-cli python scripts/run_benchmarks.py \
 Latest run: 1,000,000 sales rows, 16 row groups, 22.5 MB Parquet, batch size
 8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04,
 NVIDIA GeForce RTX 3050 Laptop GPU (4 GB, compute 8.6, CUDA 12.9.86). DuckDB
-used its default 16 threads; the engine is single-threaded. The GPU run used
+used its default 16 threads; the engine ran with its default single-threaded
+scan (opt-in `--threads` parallel decoding is not part of the committed run).
+The GPU run used
 three timed repetitions after one warm-up; `--gpu` also runs a device self-test
 before timing so CUDA module loading is not charged to the first query.
 
@@ -453,7 +477,9 @@ creates them on first run with `scripts/generate_data.py`.
 
 ## Known limits (0.2.0)
 
-- Read-only, single-process, single-threaded engine.
+- Read-only, single-process engine. Operators other than the scan are
+  single-threaded; the scan decodes row groups in parallel only with opt-in
+  `--threads`.
 - Flat schemas only; nested Parquet types are rejected.
 - Inner and left joins only, with equality keys that must have exactly the same
   Arrow type on both sides. No right, full, cross, semi, or anti joins.
@@ -465,7 +491,7 @@ creates them on first run with `scripts/generate_data.py`.
 - Aggregation and single-key integer/string join probing are batch-vectorized:
   group IDs (or table lookups) are built for a whole batch, then state is
   updated in one fused pass. Multi-key joins still serialize keys row by row,
-  and no operator is parallel yet.
+  and no operator other than the opt-in parallel scan is parallel yet.
 - GPU acceleration is optional and narrow: a CUDA build can run no-`GROUP BY`
   queries that combine `COUNT` with floating-point `SUM`/`AVG`; the GPU computes
   only the floating-point reductions, while `COUNT`, filtering, and the Parquet
@@ -474,8 +500,8 @@ creates them on first run with `scripts/generate_data.py`.
   and publishes measured, verified GPU results alongside the CPU results.
 
 Remaining version 2 work is listed in the
-[write-up](docs/engineering-writeup.md#8-limits-and-version-2-ideas): multi-threading,
-broader CUDA coverage
+[write-up](docs/engineering-writeup.md#8-limits-and-version-2-ideas): parallel
+operators beyond the scan, broader CUDA coverage
 (grouped aggregates, filters, joins) on the verified RTX 3050, the remaining join
 types and SQL clauses, join-key type coercion, spilling, and nested-type
 support. These are listed rather than half-implemented.
