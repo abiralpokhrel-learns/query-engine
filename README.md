@@ -397,9 +397,9 @@ predict: past four workers there is nothing left to overlap, and the extra
 readers only compete for memory and cores. The remaining losses are
 therefore operator-bound, not scan-bound.
 
-The GPU runs are a separate measurement from a different date and a different
-binary, so they are never folded into the CPU ratios above. They stay in the
-write-up rather than in this table.
+The GPU numbers come from a separate session on a separate CUDA build, so they
+are never folded into these ratios; they are read on their own in the next
+section, and the scaling detail is in the write-up.
 
 ### Reading the results
 
@@ -431,18 +431,18 @@ from 5.1 s to around 0.25 s. Absolute times drift between benchmark sessions,
 including for queries where the sort or join dominates, so cross-session
 comparisons are context, not attribution.
 
-**The GPU result is deliberately not presented as a win.** The optional CUDA
-path has not been measured ahead of the CPU on any query it supports. On
-`filter_aggregate` the kernel is trivial (0.256 ms at ten million rows); the
-end-to-end result is 9.10 ms against 6.10 ms on the CPU at one million rows, and
-34.29 ms against 35.56 ms at ten million, which is a 1.3 ms difference on a query
-DuckDB finishes in 28.13 ms. On `global_aggregate` the GPU is slower at both
-sizes, 1.79x the CPU at one million rows and 1.43x at ten million, because the
-host-side buffering rather than the transfer dominates: transfer and kernel
-together are 87 ms of that 753 ms query, and the rest is host work. Grouped
-aggregates, filters, joins, integer sums, and `MIN`/`MAX` stay on the CPU. Every
-number is a measured end-to-end query time, never a transfer-only or kernel-only
-speedup, and the raw per-run values are committed as
+**The GPU result is deliberately not presented as a win.** Only an ungrouped
+`COUNT`/`SUM`/`AVG` runs on the device at all; grouped aggregates, joins,
+integer sums and `MIN`/`MAX` fall back to the CPU. The one query where the GPU
+lands ahead is `filter_aggregate` at ten million rows, 34.29 against 35.56 ms,
+and a 1.3 ms margin (3.6%) on a query DuckDB answers in 28.13 ms is inside what
+a single session can resolve. At one million rows the same query is slower, 9.10
+against 6.10 ms, because a 0.29 ms kernel does not pay for its own launch and
+transfer. `global_aggregate` loses at both sizes, 1.79x the CPU at one million
+rows and 1.43x at ten million, and the transfer is not the reason: transfer and
+kernel together are 87 ms of that 753 ms run, so host-side buffering is the
+rest. Every number is a measured end-to-end query time, never a transfer-only or
+kernel-only speedup, and the raw per-run values are committed as
 [`gpu_1m_20261112.json`](benchmarks/results/gpu_1m_20261112.json) and
 [`gpu_10m_20261112.json`](benchmarks/results/gpu_10m_20261112.json).
 
