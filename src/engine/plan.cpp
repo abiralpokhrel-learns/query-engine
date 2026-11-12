@@ -77,6 +77,7 @@ InferType(const sql::Expr& expr, const std::shared_ptr<arrow::Schema>& schema) {
     case sql::BinaryOp::GtEq:
     case sql::BinaryOp::And:
     case sql::BinaryOp::Or:
+    case sql::BinaryOp::Like:
       return arrow::boolean();
     case sql::BinaryOp::Add:
     case sql::BinaryOp::Sub:

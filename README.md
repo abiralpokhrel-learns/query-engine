@@ -19,11 +19,11 @@ from that stored data.
 
 **Status: 0.3.0 with an optional CUDA global-aggregate path.** Version 1 is
 complete, and selected version 2 work is now implemented: `DISTINCT`, `HAVING`,
-`LEFT JOIN`, `IN` / `BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort
+`LEFT JOIN`, `IN` / `BETWEEN`, `LIKE`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort
 for `ORDER BY ... LIMIT`, batch-vectorized hash aggregation, batch-vectorized
 single-key hash joins, an opt-in parallel scan (`--threads`) that decodes
 Parquet row groups concurrently while preserving the exact serial output order,
-and an opt-in CUDA build for global aggregates. All 194 tests (185 CPU
+and an opt-in CUDA build for global aggregates. All 207 tests (198 CPU
 correctness tests plus 9 GPU-gated tests that skip on CPU-only builds) pass
 against DuckDB on generated edge-case datasets, the C++ parser suite passes,
 and the differential fuzzer matches DuckDB on multi-seed sweeps. Every
@@ -227,8 +227,9 @@ FROM table [alias]
 
 Supported expressions: column references, integer / double / string / boolean
 / `NULL` literals, `+ - * /`, comparisons, `AND`, `OR`, `NOT`, `IS NULL`,
-`IS NOT NULL`, `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`, and `COUNT(*)`,
-`COUNT(col)`, `SUM`, `AVG`, `MIN`, `MAX`. Inner and left outer joins support one
+`IS NOT NULL`, `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`, `[NOT] LIKE`
+with `%` and `_`, and `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN`, `MAX`.
+Inner and left outer joins support one
 or more equality conditions. Identifiers are case-insensitive, quoted
 identifiers and `''`-escaped strings are accepted, and dates are compared as ISO
 `YYYY-MM-DD` literals.
@@ -240,7 +241,7 @@ LIMIT` uses a bounded top-k sort rather than sorting every matching row.
 
 Unsupported SQL is rejected with a clear error rather than being silently
 misinterpreted. Still out of scope: `RIGHT`/`FULL`/`CROSS`/`NATURAL` joins,
-`JOIN ... USING`, `LIKE`, `NULLS FIRST/LAST`, `UNION`/`EXCEPT`/`INTERSECT`,
+`JOIN ... USING`, `NULLS FIRST/LAST`, `UNION`/`EXCEPT`/`INTERSECT`,
 subqueries, CTEs, window functions, `DISTINCT` inside aggregates, aggregate
 arguments that are expressions, `GROUP BY` expressions, and non-aggregate
 columns mixed with aggregates.
@@ -323,7 +324,7 @@ the supported subset, runs each against this engine and DuckDB, and compares
 every value; a 30-query sample is part of every pytest run.
 
 ```bash
-python -m pytest tests -q                     # 194 tests; 9 GPU tests skip without a device
+python -m pytest tests -q                     # 207 tests; 9 GPU tests skip without a device
 ctest --test-dir build --output-on-failure    # parser/unit tests
 ctest --test-dir build-cuda --output-on-failure  # parser + CUDA device self-test
 python scripts/fuzz_compare.py --queries 1000 --seed 2026
@@ -516,8 +517,10 @@ creates them on first run with `scripts/generate_data.py`.
 - Flat schemas only; nested Parquet types are rejected.
 - Inner and left joins only, with equality keys that must have exactly the same
   Arrow type on both sides. No right, full, cross, semi, or anti joins.
-- No `LIKE`, `NULLS FIRST/LAST`, set operations, subqueries, CTEs, or window
-  functions.
+- No `NULLS FIRST/LAST`, set operations, subqueries, CTEs, or window
+  functions. `LIKE` supports `%` and `_` only; a pattern containing a backslash
+  is rejected instead of being silently reinterpreted, because Arrow's LIKE
+  kernel treats it as an escape character and DuckDB's does not.
 - No `DISTINCT` inside aggregates; aggregate arguments must be plain columns;
   `GROUP BY` accepts plain columns only.
 - Sort and aggregation are in-memory and assume current data sizes; no spilling.

@@ -19,7 +19,7 @@ opt-in parallel row-group scan (`--threads`, Section 6.4).
 
 At the time of writing:
 
-- 194 tests pass against DuckDB on a CUDA build (185 CPU tests plus 9 GPU-gated
+- 207 tests pass against DuckDB on a CUDA build (198 CPU tests plus 9 GPU-gated
   tests); the GPU tests skip on CPU-only builds.
 - The C++ parser/unit suite passes, and the CUDA build adds a real reduction
   self-test.
@@ -81,17 +81,20 @@ The parser is a hand-written recursive-descent parser. It supports:
 - `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY` (expressions or ordinals), `LIMIT`,
   and `OFFSET`;
 - arithmetic, comparisons, `AND`/`OR`/`NOT`, `IS [NOT] NULL`;
-- `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`;
+- `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`, `[NOT] LIKE` with `%` and `_`;
 - `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN`, `MAX`.
 
 `IN` and `BETWEEN` are rewritten during parsing into comparisons joined with
 `OR`/`AND`. The rewrites preserve SQL three-valued logic, so `NOT IN` with a
 `NULL` in the list still evaluates to `NULL` rather than a spurious match.
+`LIKE` is evaluated with Arrow's regex kernel: the pattern is escaped, `%`
+becomes `.*`, `_` becomes `.`, and the result is anchored, so a LIKE pattern can
+only mean what SQL LIKE means. The pattern must be a string literal, and a
+backslash is rejected because the two engines disagree about its meaning.
 
 Everything outside that contract is rejected with an error that names the
-construct (`RIGHT`/`FULL`/`CROSS` joins, `JOIN ... USING`, `LIKE`, `NULLS
-FIRST/LAST`, set operations, subqueries, unsupported functions, trailing tokens,
-and so on). The parser never guesses. Keyword expectations check the exact
+construct (`RIGHT`/`FULL`/`CROSS` joins, `JOIN ... USING`, `NULLS FIRST/LAST`,
+set operations, subqueries, unsupported functions, trailing tokens, and so on). The parser never guesses. Keyword expectations check the exact
 keyword, not merely that *some* keyword was found.
 
 The planner performs two high-value optimizations:
@@ -662,8 +665,9 @@ Known 0.3.0 limits:
 - flat schemas only; nested Parquet types are rejected at catalog load;
 - inner and left joins only, with equality keys whose Arrow types must match
   exactly; no right, full, cross, semi, or anti joins;
-- no `LIKE`, `NULLS FIRST/LAST`, `UNION`/`EXCEPT`/`INTERSECT`, subqueries, CTEs,
-  or window functions;
+- no `NULLS FIRST/LAST`, `UNION`/`EXCEPT`/`INTERSECT`, subqueries, CTEs, or
+  window functions; `LIKE` supports `%` and `_` and rejects patterns containing
+  a backslash, and a pattern must be a string literal;
 - no `DISTINCT` inside aggregates, no aggregate arguments that are expressions,
   and no `GROUP BY` expressions;
 - in-memory sort and aggregation, with no spilling;
@@ -686,7 +690,8 @@ Version 2 work still open, in priority order:
    implemented and measured, and Section 7.4 argues the host-side copy has to
    go first.
 3. Remaining join types and join-key type coercion.
-4. `LIKE`, set operations, subqueries, CTEs, and window functions.
+4. Set operations, subqueries, CTEs, and window functions, then broader `LIKE`
+   (a column pattern or an `ESCAPE` clause).
 5. Aggregate expressions, `DISTINCT` aggregates, and `GROUP BY` expressions.
 6. Memory accounting and spilling for sorts and aggregations.
 7. Additional Parquet encodings and nested-type support.
