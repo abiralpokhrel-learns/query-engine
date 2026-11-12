@@ -573,28 +573,30 @@ execution engine.
 
 ### 7.3 Measured result
 
-The verified run used the RTX 3050 Laptop GPU (4 GB, compute 8.6, CUDA 12.9.86,
-driver 591.84) on 1,000,000 sales rows. GPU end-to-end times are medians of
-three runs after a warm-up; the CLI self-test ran before timing. Transfer and
-kernel columns are the separately measured CUDA components.
+The first verified run, in an earlier session than Section 7.4, used the RTX 3050
+Laptop GPU (4 GB, compute 8.6, CUDA 12.9.86, driver 591.84) on 1,000,000 sales
+rows. GPU end-to-end times are medians of three runs after a warm-up; the CLI
+self-test ran before timing. Transfer and kernel columns are the separately
+measured CUDA components.
 
 | Query | CPU (ms) | GPU end-to-end (ms) | Transfer (ms) | Kernel (ms) | GPU / CPU |
 |---|---:|---:|---:|---:|---:|
 | `filter_aggregate` | 7.18 | 10.11 | 0.217 | 0.050 | 1.41x |
 | `global_aggregate` | 63.49 | 80.57 | 3.179 | 0.629 | 1.27x |
 
-The result is reported without a speedup claim, and the CPU won both queries in
-this run. On `filter_aggregate`, the kernel and transfer are tiny; the 10.11 ms
-end-to-end result versus 7.18 ms on the CPU is within the noise this few-ms
-query shows between local runs, and earlier committed runs had the GPU slightly
-ahead of the CPU on it, so the honest conclusion is a tie at best rather than a
-speedup. On `global_aggregate`, moving `SUM` and `AVG` over one million rows to
-the GPU does not offset the host-side buffering: 80.57 ms versus 63.49 ms on the
-CPU, a 1.27x GPU/CPU ratio. Repeated local runs of the full-table sum straddle
-1.0x, so the honest conclusion is roughly tied at best. DuckDB remains faster on
-both queries because it vectorizes and multi-threads the scan and aggregation;
-at this data size the Parquet scan and host-side work dominate. The GPU is not
-claimed to accelerate queries that spend most of their time decoding Parquet.
+The result is reported without a speedup claim: the CPU won both queries in this
+session. On `filter_aggregate` the kernel and transfer are a fraction of a
+millisecond, so the 10.11 ms end-to-end result against 7.18 ms on the CPU says
+more about per-process catalog and startup overhead on a single-digit-millisecond
+query than about the device, and no fast/slow conclusion should be drawn from
+it. On `global_aggregate`, moving `SUM` and `AVG` over one million rows to the
+device does not offset host-side buffering: 80.57 against 63.49 ms, 1.27x.
+DuckDB remains faster on both queries because it vectorizes and multi-threads
+the scan and aggregation, which at this size dominate. The same-session
+comparison in Section 7.4 reproduced both losses on the 0.3.0 binary and widened
+the global aggregate gap to 1.79x, so this earlier session understated it rather
+than overstating it. The GPU is not claimed to accelerate queries that spend
+most of their time decoding Parquet.
 
 ### 7.4 Scaling to ten million rows
 
