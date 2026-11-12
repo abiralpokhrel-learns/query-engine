@@ -46,7 +46,8 @@ class ScanOperator final : public Operator {
 public:
   ScanOperator(std::shared_ptr<ParquetSource> source, std::vector<std::string> file_columns,
                std::vector<std::string> output_names, std::vector<sql::ExprPtr> filters,
-               int64_t batch_size, std::shared_ptr<ExecutionStats> stats);
+               int64_t batch_size, std::shared_ptr<ExecutionStats> stats, int threads = 1);
+  ~ScanOperator() override;
 
   const std::shared_ptr<arrow::Schema>& schema() const override {
     return schema_;
@@ -59,18 +60,25 @@ public:
 
 private:
   arrow::Status Initialize();
+  // Parallel path: row groups are decoded by worker threads with their own
+  // Parquet readers, then emitted in the same order as the serial path.
+  arrow::Result<std::shared_ptr<arrow::RecordBatch>> NextParallel();
+  arrow::Status StartWorkers();
 
   std::shared_ptr<ParquetSource> source_;
   std::vector<std::string> file_columns_;
   std::vector<std::string> output_names_;
   std::vector<sql::ExprPtr> filters_;
   int64_t batch_size_;
+  int threads_ = 1;
   std::shared_ptr<ExecutionStats> stats_;
   std::shared_ptr<arrow::Schema> schema_;
   std::vector<int> column_indices_;
   std::vector<int> row_groups_;
   std::vector<ScanFilter> scan_filters_;
   std::unique_ptr<arrow::RecordBatchReader> reader_;
+  struct Prefetch;
+  std::unique_ptr<Prefetch> prefetch_;
   arrow::Status init_status_ = arrow::Status::OK();
   bool done_ = false;
   bool initialized_ = false;

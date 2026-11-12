@@ -8,6 +8,9 @@ is both a reusable generator and a larger standalone harness.
 
 Example:
     ~/qe-env/bin/python scripts/fuzz_compare.py --queries 500 --seed 7
+
+Pass --threads N to route every generated query through the parallel scan so
+the differential sweep also covers that path.
 """
 
 from __future__ import annotations
@@ -320,20 +323,22 @@ def open_views(data_dir: Path) -> duckdb.DuckDBPyConnection:
     return conn
 
 
-def run_qe(data_dir: Path, query: str) -> tuple[list[list], str]:
+def run_qe(data_dir: Path, query: str, threads: int = 1) -> tuple[list[list], str]:
     args = [str(BINARY)]
     for name in TABLE_NAMES:
         args += ["--table", f"{name}={data_dir / (name + '.parquet')}"]
     args += ["--query", query, "--format", "json", "--no-stats"]
+    if threads > 1:
+        args += ["--threads", str(threads)]
     completed = subprocess.run(args, capture_output=True, text=True)
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or "qe-cli failed")
     return json.loads(completed.stdout)["rows"], completed.stderr
 
 
-def compare_query(conn, data_dir: Path, query: str) -> str | None:
+def compare_query(conn, data_dir: Path, query: str, threads: int = 1) -> str | None:
     try:
-        actual, _ = run_qe(data_dir, query)
+        actual, _ = run_qe(data_dir, query, threads)
     except RuntimeError as error:
         return f"qe failed: {error}"
     expected = [normalize(row) for row in conn.execute(query).fetchall()]
@@ -359,6 +364,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--rows", type=int, default=5000, help="rows when generating data")
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="run every query with --threads N so the sweep covers the parallel scan",
+    )
     parser.add_argument("--show-all", action="store_true")
     args = parser.parse_args(argv)
 
@@ -397,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for index, query in enumerate(queries, 1):
             attempted += 1
-            problem = compare_query(conn, data_dir, query)
+            problem = compare_query(conn, data_dir, query, args.threads)
             if problem:
                 failures += 1
                 print(f"FAIL [{index}/{len(queries)}] {problem}\n  {query}\n", file=sys.stderr)

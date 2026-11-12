@@ -459,6 +459,84 @@ def test_batch_sizes_do_not_change_results(data_dir: Path, conn) -> None:
                 assert same_value(a, e), (batch_size, actual_row, expected_row)
 
 
+def assert_matches_threads_invariant(
+    data_dir: Path, query: str, conn, tables: Iterable[str] = TABLE_NAMES
+) -> None:
+    """Runs a query at several thread counts and batch sizes; every run must
+    match DuckDB and reproduce the single-threaded rows exactly."""
+    expected = [normalize(row) for row in conn.execute(query).fetchall()]
+    baseline: list | None = None
+    for threads, batch_size in (("1", "8192"), ("2", "8192"), ("4", "7"), ("8", "128")):
+        run = run_qe(
+            data_dir,
+            query,
+            "--threads",
+            threads,
+            "--batch-size",
+            batch_size,
+            "--no-stats",
+            tables=tables,
+        )
+        assert run.returncode == 0, f"threads {threads}: {run.stderr}"
+        actual = run.rows
+        assert len(actual) == len(expected), (threads, len(actual), len(expected))
+        for actual_row, expected_row in zip(actual, expected):
+            for a, e in zip(actual_row, expected_row):
+                assert same_value(a, e), (threads, actual_row, expected_row)
+        if baseline is None:
+            baseline = actual
+        else:
+            assert actual == baseline, f"threads {threads} changed the result order"
+
+
+THREAD_INVARIANT_QUERIES = [
+    # Aggregation, top-k, pushdown, HAVING, DISTINCT, and OFFSET over five
+    # row groups of sales data.
+    "SELECT region, COUNT(*), SUM(amount), AVG(quantity) FROM sales "
+    "GROUP BY region ORDER BY region",
+    "SELECT sale_id, amount FROM sales WHERE amount > 1000 ORDER BY amount DESC, sale_id LIMIT 10",
+    "SELECT COUNT(*), SUM(amount) FROM sales WHERE sale_date < '2024-01-15'",
+    "SELECT region, COUNT(*) FROM sales GROUP BY region HAVING COUNT(*) > 500 ORDER BY region",
+    "SELECT DISTINCT region, channel FROM sales ORDER BY region, channel",
+    "SELECT sale_id FROM sales ORDER BY sale_id LIMIT 5 OFFSET 30",
+    # Joins read both sides through (possibly parallel) scans.
+    "SELECT c.country, SUM(s.amount) FROM sales s "
+    "JOIN customers c ON s.customer_id = c.customer_id "
+    "GROUP BY c.country ORDER BY c.country",
+    "SELECT l.id, r.right_value FROM edge_left l "
+    "LEFT JOIN edge_right r ON l.id = r.id ORDER BY l.id, r.right_value",
+    # NULL-heavy grouping and an empty result.
+    "SELECT quantity, COUNT(*), SUM(amount) FROM edge_cases GROUP BY quantity ORDER BY quantity",
+    "SELECT region FROM sales WHERE 1 = 0 GROUP BY region",
+]
+
+
+@pytest.mark.parametrize("query", THREAD_INVARIANT_QUERIES)
+def test_thread_counts_do_not_change_results(data_dir: Path, conn, query: str) -> None:
+    assert_matches_threads_invariant(data_dir, query, conn)
+
+
+def test_scan_stats_are_identical_across_threads(data_dir: Path, conn) -> None:
+    query = "SELECT COUNT(*), SUM(amount) FROM sales WHERE sale_date < '2024-01-15'"
+    stats_by_threads: dict[str, dict[str, int]] = {}
+    for threads in ("1", "4"):
+        run = assert_matches_duckdb(data_dir, conn, query, "--threads", threads)
+        stats_by_threads[threads] = parse_stats(run.stderr)
+    assert stats_by_threads["1"] == stats_by_threads["4"]
+    stats = stats_by_threads["4"]
+    assert stats["row_groups_skipped"] > 0, stats
+    assert stats["rows_after_pushdown"] < stats["rows_scanned"], stats
+
+
+def test_count_star_metadata_with_threads(data_dir: Path, conn) -> None:
+    # The metadata-only COUNT(*) path must not change with --threads; it never
+    # spawns scan workers because no payload column is decoded.
+    run = assert_matches_duckdb(data_dir, conn, "SELECT COUNT(*) FROM sales", "--threads", "4")
+    assert "rows_from_metadata=5000" in run.stderr, run.stderr
+    assert "rows_scanned=0" in run.stderr, run.stderr
+    assert "batches=0" in run.stderr, run.stderr
+
+
 def test_dense_integer_groups_expand_across_batches(data_dir: Path, conn) -> None:
     path = data_dir / "dense_negative.parquet"
     # Keys start positive, then jump up and later below zero. The dense table
@@ -740,6 +818,18 @@ def test_cli_usage_errors() -> None:
             [str(BINARY), "--table", "sales=x.parquet", "--query", "SELECT 1", "--batch-size", "0"],
             "--batch-size",
         ),
+        (
+            [str(BINARY), "--table", "sales=x.parquet", "--query", "SELECT 1", "--threads", "0"],
+            "--threads",
+        ),
+        (
+            [str(BINARY), "--table", "sales=x.parquet", "--query", "SELECT 1", "--threads", "1025"],
+            "--threads",
+        ),
+        (
+            [str(BINARY), "--table", "sales=x.parquet", "--query", "SELECT 1", "--threads", "abc"],
+            "--threads",
+        ),
     ]
     for args, fragment in cases:
         completed = subprocess.run(args, capture_output=True, text=True)
@@ -768,3 +858,4 @@ def test_version_and_help() -> None:
     help_run = subprocess.run([str(BINARY), "--help"], capture_output=True, text=True)
     assert help_run.returncode == 0
     assert "Usage:" in help_run.stdout
+    assert "--threads" in help_run.stdout
