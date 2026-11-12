@@ -12,13 +12,14 @@ results are compared exactly (with an explicit tolerance for floating point).
 The project is deliberately small. Version 1 is a finished CPU engine with a
 verified benchmark harness, not a half-built attempt at a full database. On top
 of that base, version 2 has added `DISTINCT`, `HAVING`, `LEFT JOIN`, `IN` /
-`BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort, and an opt-in CUDA
-global-aggregate path. The GPU implementation, verification, and measured
-results are documented in Section 7.
+`BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort, an opt-in CUDA
+global-aggregate path (Section 7), batch-vectorized hash aggregation
+(Section 6.2), batch-vectorized single-key hash joins (Section 6.3), and an
+opt-in parallel row-group scan (`--threads`, Section 6.4).
 
 At the time of writing:
 
-- 182 tests pass against DuckDB on a CUDA build (173 CPU tests plus 9 GPU-gated
+- 194 tests pass against DuckDB on a CUDA build (185 CPU tests plus 9 GPU-gated
   tests); the GPU tests skip on CPU-only builds.
 - The C++ parser/unit suite passes, and the CUDA build adds a real reduction
   self-test.
@@ -487,7 +488,8 @@ loops (integer `SUM`, integer and double `MIN`/`MAX`).
 
 An alternating same-session A/B on the 1M-row dataset (`--threads 8` vs
 `--threads 1`, 7 interleaved rounds, 5 repetitions per invocation, minimum
-`execute_ms`) measured:
+`execute_ms`; the same Ryzen 7 170 machine as the committed run, dataset read
+from the ext4 home directory rather than `/mnt/c`) measured:
 
 | Query | threads=1 | threads=8 | speedup |
 |---|---:|---:|---:|
