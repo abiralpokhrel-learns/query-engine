@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 <p align="center">
-  <img src="docs/assets/qe-cosmos-hero.gif" alt="qe — a columnar query engine, built from scratch. Hundreds of tests, 1M rows, wins and losses both shown." width="100%">
+  <img src="docs/assets/qe-cosmos-hero.gif" alt="qe — a columnar query engine, built from scratch. Over 200 tests, 1M rows, wins and losses both shown." width="100%">
 </p>
 
 A small SQL query engine built from first principles in C++20. It reads Apache
@@ -43,7 +43,7 @@ results are in [`benchmarks/results/latest.md`](benchmarks/results/latest.md).
 > CUDA device is available. See the
 > [engineering write-up](docs/engineering-writeup.md).
 
-**Jump to:** [Demo](#demo) · [Getting started](#getting-started) · [Architecture](#architecture) · [SQL subset](#sql-subset) · [Benchmarks](#benchmarks) · [Tests](#test-suite) · [Known limits](#known-limits-030) · [Security](#security) · [Contributing](CONTRIBUTING.md)
+**Jump to:** [Demo](#demo) · [Getting started](#getting-started) · [Architecture](#architecture) · [SQL subset](#sql-subset) · [Benchmarks](#benchmarks) · [Tests](#test-suite) · [Known limits](#known-limits) · [Security](#security) · [Contributing](CONTRIBUTING.md)
 
 ## Highlights
 
@@ -73,6 +73,26 @@ results are in [`benchmarks/results/latest.md`](benchmarks/results/latest.md).
 - **CPU by default, CUDA opt-in.** The default build has no CUDA dependency. A
   separate CUDA build can move global floating-point reductions to the GPU and
   falls back explicitly for unsupported shapes.
+
+## Completed milestones
+
+- [x] **Setup** — WSL2 Ubuntu, pinned C++/Python environment, CUDA toolkit,
+  DuckDB, and a real device self-test on the RTX 3050.
+- [x] **Storage and scan** — Parquet reading, column pruning, predicate
+  pushdown, row-group skipping, metadata-only `COUNT(*)`, and columnar batches.
+- [x] **CPU engine** — hand-written parser and planner, vectorized filter,
+  aggregate, hash join, distinct, sort, and limit, with inner and left joins.
+- [x] **GPU path** — optional CUDA global aggregates, batched execution, CPU
+  fallback, and separate transfer/kernel timing.
+- [x] **Benchmarks** — verified harness, stored JSON/Markdown results, and
+  charts rendered from that stored data.
+- [x] **Hardening** — DuckDB differential suite, deterministic fuzzer, parser
+  tests, ASan/UBSan CI, and a coverage gate.
+- [x] **Demo and write-up** — one-command demo, sample data, README, and
+  engineering write-up.
+- [x] **Version 2 work** — `DISTINCT`, `HAVING`, `LEFT JOIN`, `IN`/`BETWEEN`,
+  `LIKE`, `OFFSET`, metadata-only `COUNT(*)`, bounded top-k, batch-vectorized
+  aggregation and single-key joins, and the opt-in parallel scan.
 
 ## Demo
 
@@ -153,14 +173,15 @@ Options:
   --version             Show the version.
 
 Timings and scan statistics are written to stderr; query results go to stdout.
-With `--gpu`, stderr also reports whether a GPU kernel ran, plus measured
-transfer and kernel time.
 
 Examples:
   qe-cli data/sales.parquet "SELECT region, SUM(amount) FROM sales GROUP BY region"
   qe-cli --table a=a.parquet --table b=b.parquet \
          --query "SELECT a.k, b.v FROM a JOIN b ON a.id = b.id LIMIT 10"
 ```
+
+With `--gpu`, stderr also reports whether a GPU kernel ran, plus measured
+transfer and kernel time.
 
 ### Optional CUDA build
 
@@ -347,9 +368,10 @@ warm-ups, repeats, raw runs, medians, query text, hardware, library versions,
 and the dataset manifest. With `--scan-threads`, every thread count is verified
 and timed separately. Charts are rendered from the stored JSON, never from
 hand-typed numbers. Pull requests run the same harness and fail if a gated
-query's CPU/DuckDB ratio grows more than 3x beyond the committed baseline. The
-`global_aggregate` query is verified and reported, but it is not a gate because
-DuckDB's thread scaling makes its scan-bound ratio unstable across CI runners.
+query's CPU/DuckDB ratio exceeds 3x its committed baseline, with a +1.0 floor
+for small ratios. The `global_aggregate` query is verified and reported, but it
+is not a gate because DuckDB's thread scaling makes its scan-bound ratio
+unstable across CI runners.
 
 ```bash
 python scripts/run_benchmarks.py --rows 1000000 --repeats 5 --warmups 2 \
@@ -366,7 +388,10 @@ batch size 8,192, on an AMD Ryzen 7 170 (16 logical CPUs) with 7.4 GiB RAM in
 WSL2 Ubuntu 24.04, using the default CPU-only build. Each thread count is timed
 as five repetitions after two warm-ups, and every one is verified against DuckDB
 first, so a faster row here cannot come from different results. DuckDB runs with
-its default 16 threads.
+its default 16 threads. The committed CPU run was captured just before the
+version bump, so `benchmarks/results/latest.json` reports `qe-cli 0.2.0`. Apart
+from the version string, no engine code changed between that run and the 0.3.0
+release.
 
 The table reports the serial baseline and the opt-in parallel scan from one
 verified session, rather than describing only the default configuration. GPU
@@ -391,11 +416,13 @@ timings are not in it: they come from a separate CUDA build and are reported in
 | count_star | 0.01 | 0.01 | 0.01 | 7.25 | 0.00x | 0.00x |
 
 Wins against DuckDB by scan thread count: **3/8** at one thread, **5/8** at
-four, and **5/8** at eight. Four threads matched or beat eight on every
-scan-bound query, which is what 16 row groups and one serial consumer would
-predict: past four workers there is nothing left to overlap, and the extra
-readers only compete for memory and cores. The remaining losses are
-therefore operator-bound, not scan-bound.
+four, and **5/8** at eight. Four threads matched or beat eight on every large
+scan-bound query; the lone exception is the sub-6 ms `filter_aggregate`, where
+eight threads measured 4.54 ms against 5.15 ms, a difference inside the
+session's run-to-run spread. That is what 16 row groups and one serial consumer
+would predict: past four workers there is little left to overlap, and the extra
+readers only compete for memory and cores. The remaining losses are therefore
+operator-bound, not scan-bound.
 
 The GPU numbers come from a separate session on a separate CUDA build, so they
 are never folded into these ratios; they are read on their own in the next
@@ -509,7 +536,7 @@ creates them on first run with `scripts/generate_data.py`.
 | CUDA toolkit | 12.9.86 (optional `QE_ENABLE_CUDA` build) |
 | GPU | NVIDIA GeForce RTX 3050 Laptop GPU, 4 GB, compute 8.6, driver 591.84 (WSL2) |
 
-## Known limits (0.3.0)
+## Known limits
 
 - Read-only, single-process engine. Operators other than the scan are
   single-threaded; the scan decodes row groups in parallel only with opt-in

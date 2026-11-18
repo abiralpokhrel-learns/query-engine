@@ -79,7 +79,8 @@ All notable changes to this project are documented here. The format follows
   116.50 ms), `group_customer` in 137.65 ms (from 202.56 ms), and the join
   aggregate in 203.53 ms (from 297.83 ms). The engine now wins 5 of 8 queries
   against DuckDB at four or eight threads instead of 3 of 8, and four threads
-  matched or beat eight on every scan-bound query.
+  matched or beat eight on every large scan-bound query, with the sub-6 ms
+  `filter_aggregate` the lone exception.
 - CI now uses the current `actions/checkout` and `setup-micromamba` releases.
 
 ## [0.2.0] - 2026-11-06

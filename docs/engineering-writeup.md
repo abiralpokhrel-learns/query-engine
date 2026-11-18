@@ -12,10 +12,11 @@ results are compared exactly (with an explicit tolerance for floating point).
 The project is deliberately small. Version 1 is a finished CPU engine with a
 verified benchmark harness, not a half-built attempt at a full database. On top
 of that base, version 2 has added `DISTINCT`, `HAVING`, `LEFT JOIN`, `IN` /
-`BETWEEN`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort, an opt-in CUDA
-global-aggregate path (Section 7), batch-vectorized hash aggregation
-(Section 6.2), batch-vectorized single-key hash joins (Section 6.3), and an
-opt-in parallel row-group scan (`--threads`, Section 6.4).
+`BETWEEN`, `LIKE`, `OFFSET`, metadata-only `COUNT(*)`, a top-k sort, an
+opt-in CUDA global-aggregate path (Section 7), batch-vectorized hash
+aggregation (Section 6.2), batch-vectorized single-key hash joins
+(Section 6.3), and an opt-in parallel row-group scan (`--threads`,
+Section 6.4).
 
 At the time of writing:
 
@@ -242,8 +243,8 @@ Latest run: 2026-11-12, 1,000,000 sales rows, 16 row groups, 22.5 MB, batch
 8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04,
 CPU-only build. Five timed repetitions after two warm-ups at each scan thread
 count; DuckDB uses its default 16 threads. Every thread count is verified
-against DuckDB before timing. The GPU runs are in Section 7.3 and come from the
-2026-11-09 run, because this one has no CUDA build.
+against DuckDB before timing. The GPU runs are in Sections 7.3 and 7.4 and come
+from separate CUDA sessions, because this run has no CUDA build.
 
 | Query | qe 1 thread | qe 4 threads | qe 8 threads | DuckDB | 1-thread ratio | 8-thread ratio |
 |---|---:|---:|---:|---:|---:|---:|
@@ -261,10 +262,12 @@ scan is what moves the story: `global_aggregate` and `topk` cross below 1.0x
 once decode overlaps the single-threaded operator behind it, and the three
 remaining losses are operator-bound rather than scan-bound.
 
-Four threads matched or beat eight on every scan-bound query. That is the
-expected shape for this dataset: 16 row groups distributed across `N` workers
-leaves two units per worker at eight threads and four at four, while the
-consumer stays serial, so the fifth through eighth readers mostly add memory
+Four threads matched or beat eight on every large scan-bound query; the lone
+exception is the sub-6 ms `filter_aggregate`, where eight threads measured
+4.54 ms against 5.15 ms, a difference inside the session's run-to-run spread.
+That is the expected shape for this dataset: 16 row groups distributed across
+`N` workers leaves two units per worker at eight threads and four at four, while
+the consumer stays serial, so the fifth through eighth readers mostly add memory
 residency and core contention. The scaling limit is the operator pipeline, not
 the decoder, which is the argument for the parallel-operator work in Section 8.
 
@@ -659,7 +662,7 @@ same verified device.
 
 ## 8. Limits and version 2 ideas
 
-Known 0.3.0 limits:
+Known limits:
 
 - read-only, single-process; operators other than the scan are
   single-threaded, and the scan decodes row groups in parallel only with
