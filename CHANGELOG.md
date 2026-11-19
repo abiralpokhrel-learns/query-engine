@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `EXPLAIN ANALYZE` (also `--explain-analyze`): execute a query once and print
+  the actual operator tree with inclusive time, self time, output rows, and
+  batches per operator. Profiling is an opt-in decorator, so the normal
+  execution path does not read a clock or allocate profile nodes.
+- A Valgrind/callgrind fallback for the `perf` flame graph that WSL2 cannot
+  provide. `scripts/profile.sh` prefers `perf record`, otherwise instruments
+  only `qe::ExecutePlan` and writes `profiling/callgrind-report.txt`; the
+  committed report shows Parquet decode and Arrow filter/take dominating the
+  query.
 - `[NOT] LIKE` with `%` and `_`, verified against DuckDB for prefix, infix,
   single-character, empty-string, projected-pattern, and `NOT` forms. The pattern
   must be a string literal, and a pattern containing a backslash is rejected with

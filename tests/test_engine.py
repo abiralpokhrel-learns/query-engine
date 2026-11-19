@@ -444,6 +444,29 @@ def test_explain_shows_pushdown_and_column_pruning(data_dir: Path) -> None:
         assert unused not in scan_line
 
 
+def test_explain_analyze_reports_operator_time_and_rows(data_dir: Path) -> None:
+    query = "SELECT region, COUNT(*) FROM sales GROUP BY region"
+    run = run_qe(data_dir, "EXPLAIN ANALYZE " + query, "--no-stats")
+    assert run.returncode == 0, run.stderr
+    out = run.stdout
+    assert "EXPLAIN ANALYZE" in out, out
+    assert "Execution time:" in out, out
+    lines = [line for line in out.splitlines() if "actual time=" in line]
+    assert lines, out
+    for label in ("HashAggregate", "Scan sales"):
+        line = next(line for line in lines if label in line)
+        assert "actual time=" in line and "self=" in line and " rows=" in line, line
+    # EXPLAIN ANALYZE prints the profile instead of the result rows.
+    assert not out.lstrip().startswith("["), out
+
+
+def test_explain_analyze_cli_flag(data_dir: Path) -> None:
+    run = run_qe(data_dir, "SELECT COUNT(*) FROM sales", "--explain-analyze", "--no-stats")
+    assert run.returncode == 0, run.stderr
+    assert "Scan sales" in run.stdout, run.stdout
+    assert "actual time=" in run.stdout, run.stdout
+
+
 def test_join_column_pruning(data_dir: Path) -> None:
     query = (
         "SELECT c.country, COUNT(*) FROM sales s "

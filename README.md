@@ -120,6 +120,9 @@ because it shows the work it still loses.**
   from 88.81 ms to 39.11 ms (2.3x), `GROUP BY region` from 92.14 ms to 39.99 ms
   (2.3x), the global aggregate from 43.81 ms to 20.42 ms (2.1x), and the join
   aggregate from 293.26 ms to 197.88 ms (1.5x).
+- **Per-operator profiling.** `EXPLAIN ANALYZE` executes the query once and
+  reports actual inclusive time, self time, rows, and batches for every
+  operator, so optimization starts from a measurement instead of a guess.
 - **Performance claims with receipts.** Every benchmark query is verified before
   timing; raw runs, hardware, versions, and query text live in committed JSON,
   and the chart is regenerated from that file. Wins and losses are both reported.
@@ -221,6 +224,8 @@ Options:
   --threads N           Parallel scan workers for row-group decoding
                         (default: 1). Results never depend on this.
   --explain             Print the optimized plan and do not execute.
+  --explain-analyze     Execute once and print per-operator time and rows.
+                        SQL form: EXPLAIN ANALYZE SELECT ...
   --repeat N            Execute the query N times and report the last result.
   --gpu                 Use the optional CUDA global-aggregate path where
                         supported; the CPU path remains the default.
@@ -366,6 +371,23 @@ pushed into Parquet so row groups outside January 2024 can be skipped. No rows
 are decoded in `--explain` mode.
 
 </details>
+
+`EXPLAIN ANALYZE SELECT ...` (or `--explain-analyze`) runs the query once and
+prints the actual execution tree instead of the result rows. Each operator
+reports inclusive wall time, self time (inclusive time minus direct children),
+rows emitted, and batches. For example:
+
+```text
+EXPLAIN ANALYZE
+Project [region, count(*)] (actual time=31.742 ms, self=1.874 ms, rows=9, batches=1)
+  HashAggregate group=[sales.region] aggregates=[count(*)] (actual time=29.868 ms, self=6.717 ms, rows=9, batches=1)
+    Scan sales columns=[region] (actual time=23.151 ms, self=23.151 ms, rows=200000, batches=25)
+Execution time: 31.805 ms
+```
+
+The profiling overhead is opt-in and disabled on the normal execution path.
+[`profiling/README.md`](profiling/README.md) records the callgrind fallback used
+to inspect library-level costs when `perf` is unavailable.
 
 ## Test suite
 

@@ -101,6 +101,10 @@ struct OrderItem {
 struct SelectStmt {
   std::vector<SelectItem> items;
   bool distinct = false;
+  // EXPLAIN prints the optimized plan without executing; EXPLAIN ANALYZE
+  // executes once and prints actual per-operator timings and row counts.
+  bool explain = false;
+  bool analyze = false;
   TableRef from;
   std::vector<JoinClause> joins;
   ExprPtr where;
