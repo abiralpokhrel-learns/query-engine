@@ -26,6 +26,10 @@ benchmarks/results/bench_*.json
 benchmarks/results/bench_*.md
 benchmarks/charts/bench_*.png
 
+# Nsight Compute output depends on driver permissions; the committed report
+# records whether profiling was available.
+cuda-microbench/results/ncu.txt
+
 # OS / editor
 .DS_Store
 Thumbs.db
