@@ -43,7 +43,7 @@ results are in [`benchmarks/results/latest.md`](benchmarks/results/latest.md).
 > CUDA device is available. See the
 > [engineering write-up](docs/engineering-writeup.md).
 
-**Jump to:** [Demo](#demo) · [Getting started](#getting-started) · [Architecture](#architecture) · [SQL subset](#sql-subset) · [Benchmarks](#benchmarks) · [Tests](#test-suite) · [Known limits](#known-limits) · [Security](#security) · [Contributing](CONTRIBUTING.md)
+**Jump to:** [Demo](#demo) · [Getting started](#getting-started) · [Architecture](#architecture) · [SQL subset](#sql-subset) · [Benchmarks](#benchmarks) · [Tests](#test-suite) · [Known limits](#known-limits) · [How I built this](#how-i-built-this) · [Security](#security) · [Contributing](CONTRIBUTING.md)
 
 ## qe, explained simply
 
@@ -698,9 +698,99 @@ does not open network ports. Please report suspected memory-safety, parser, or
 dependency issues through GitHub's private advisory flow rather than a public
 issue. See [SECURITY.md](SECURITY.md) for scope and reporting details.
 
-## Author
+## How I built this
 
-Built by [Abiral Pokhrel](https://github.com/abiralpokhrel-learns).
+I built qe solo in November 2026, in C++20, from scratch. There is no query
+engine library underneath it.
+
+I wanted to know how a database actually answers a question, not just how to
+use one. I use DuckDB, Postgres, and Spark in my other projects, but I had
+never seen inside one. The only way to really know was to build one myself.
+
+### Phase 1: the CPU engine
+
+The core is a hand-written lexer, a recursive-descent parser, and a planner
+that turns SQL into a vectorized operator pipeline. It reads Parquet through
+Apache Arrow, processes data in 8,192-row batches, and only opens the columns a
+query actually references. Filters are pushed into the scan, row groups whose
+min/max statistics rule out a match are skipped without being decoded, and a
+predicate-free `COUNT(*)` is answered from Parquet metadata alone.
+
+The SQL subset is small on purpose: `DISTINCT`, `HAVING`, `LEFT JOIN`,
+`IN` / `BETWEEN`, `LIKE`, `OFFSET`, and a top-k sort for `ORDER BY ... LIMIT`.
+Anything outside it is rejected with a clear error instead of being silently
+misread.
+
+### Phase 2: making it trustworthy
+
+The benchmark harness checks every query against DuckDB, and the test suite
+compares supported SQL shapes against it. There are 208 tests, 199 CPU plus 9
+GPU-gated, with about 75% line coverage, and a deterministic differential
+fuzzer that generates queries inside the supported subset and compares every
+value against DuckDB. CI enforces formatting, warnings as errors, sanitizer
+runs, a 60% coverage floor, and a benchmark regression check on pull requests.
+Main is protected, so everything lands through a PR with green CI.
+
+The benchmarks are honest on purpose. On 1M rows qe wins 3 and loses 5 of 8
+against DuckDB at one scan thread, and both sides are published with the raw
+numbers in committed JSON. The wins are selective scans and metadata-only
+`COUNT(*)` — for example, `filter_aggregate` at 4.09 ms against DuckDB's
+16.20 ms. At four scan threads the global aggregate and top-k also cross below
+DuckDB, taking it to 5 wins of 8. The remaining losses are the join and the
+grouped aggregates, where DuckDB's parallel, vectorized operators are still
+ahead.
+
+### Phase 3: making it faster
+
+Three optimizations did the real work:
+
+- **Vectorized hash aggregation.** Group IDs are built once per batch, then a
+  fused `COUNT`/`SUM`/`AVG` pass updates typed state. The low-cardinality
+  `GROUP BY` went from 5.1 s to around 0.25 s.
+- **Vectorized single-key hash joins.** The probe uses an open-addressed table
+  with inline matching instead of serializing a key per row. In an alternating
+  A/B against the previous commit, `join_country` went from 537 ms to 300 ms.
+- **Parallel row-group scan (`--threads`).** Row groups decode concurrently
+  with one Parquet reader per worker, while batches still come out in exact
+  serial order, so results never depend on the thread count. In the
+  same-session A/B it ran the scan-bound queries 1.8 to 2.9x faster. The same
+  work also fixed a real bug: an offset applied twice on nonzero-slice value
+  arrays in aggregates.
+
+Then the CUDA path, which is opt-in and narrow by design: one kernel,
+`ReduceSumKernel`, doing floating-point `SUM`/`AVG` for global aggregates on an
+RTX 3050 laptop GPU. In the 1M `filter_aggregate` run the kernel itself was
+0.050 ms and the transfer 0.217 ms, but the scan and host buffering dominate,
+so end to end the GPU is slower than the CPU at 1M rows. At 10M rows the filter
+aggregate comes out roughly tied, 34.29 ms against 35.56 ms, while the global
+aggregate is still slower. The benchmark section says so plainly, because a
+tied result is still a result.
+
+### Making it fast without breaking correctness
+
+Every optimization had to keep matching DuckDB exactly, and the `GROUP BY` work
+took the longest to get right. The worst bug was an offset applied twice inside
+aggregates, which only showed up on sliced arrays.
+
+What surprised me most is that the GPU was not the win. At 1M rows the CUDA
+path is slower than the CPU, and even at 10M rows it only ties on the filter
+query, because the scan and host buffering eat everything the kernel saves. I
+would still build the CPU engine first. That is where the real work is.
+
+### What is next
+
+Parallel aggregation (hash-partition per thread, then merge), grouped
+aggregates on the GPU only after removing the duplicate host pass and
+re-measuring at 10M rows, and more SQL, smallest first: subqueries and CTEs,
+then window functions.
+
+### Authorship
+
+Built solo by [Abiral Pokhrel](https://github.com/abiralpokhrel-learns).
+[Portfolio](https://abhiralpokharel.com.np) ·
+[LinkedIn](https://www.linkedin.com/in/abiralpokhrel2005/) ·
+[abhiral1119@gmail.com](mailto:abhiral1119@gmail.com). MIT licensed, public at
+[github.com/abiralpokhrel-learns/query-engine](https://github.com/abiralpokhrel-learns/query-engine).
 
 ## License
 
