@@ -13,6 +13,38 @@ All notable changes to this project are documented here. The format follows
   must be a string literal, and a pattern containing a backslash is rejected with
   a clear error because Arrow's kernel treats it as an escape character and
   DuckDB's LIKE does not.
+- Standalone CUDA reduction microbenchmark in `cuda-microbench/`: naive atomic,
+  shared-memory block, warp-shuffle with `double2` loads, and CUB
+  `DeviceReduce::Sum` kernels, plus a filter-and-aggregate variant and pageable,
+  pinned, and four-stream transfer paths. Every result is checked against a
+  long-double host reference, and the verified tables are committed. Nsight
+  Compute wiring is included; the committed notes record that this WSL driver
+  denied hardware counters with `ERR_NVGPUCTRPERM`.
+- A 20M-row scale artifact,
+  `benchmarks/results/scale_20m_20261118.json`, with the matching Markdown
+  report. It records 306 row groups, 448.4 MB, and 2/8 wins at one, four, and
+  eight scan threads. The README and write-up explain why 50-100M rows need a
+  chunked generator on this 7.4 GiB machine.
+
+### Fixed
+
+- Parallel-scan deadlock when a file has many row groups. Workers used to claim
+  row groups round-robin and could hold every backpressure token for later row
+  groups while the worker that owned the next unit waited forever. Units are now
+  handed out in row-group order under the same mutex, so the unit the consumer
+  needs next always has an owner holding a token. A 4,096-row-group regression
+  test runs the query three times with a 30-second timeout.
+
+### Changed
+
+- The benchmark `topk` query now orders by `amount DESC, sale_id` so the
+  LIMIT 100 boundary is deterministic. The previous query relied on an
+  unspecified order for rows with equal `amount`, which made exact-row
+  verification fail at 20M rows.
+- Regenerated the 1M-row benchmark artifacts (`latest.json`, `latest.md`, and
+  the chart) from a 2026-11-18 session on `qe-cli 0.3.0`, with 5 repetitions and
+  2 warm-ups at 1, 4, and 8 scan threads. The README, engineering write-up, and
+  test counts now match the new artifacts.
 
 ## [0.3.0] - 2026-11-12
 

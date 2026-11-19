@@ -20,7 +20,7 @@ Section 6.4).
 
 At the time of writing:
 
-- 207 tests pass against DuckDB on a CUDA build (198 CPU tests plus 9 GPU-gated
+- 208 tests pass against DuckDB on a CUDA build (199 CPU tests plus 9 GPU-gated
   tests); the GPU tests skip on CPU-only builds.
 - The C++ parser/unit suite passes, and the CUDA build adds a real reduction
   self-test.
@@ -239,35 +239,35 @@ a reviewer can inspect the numbers rather than trusting a summary.
 
 ## 5. Results
 
-Latest run: 2026-11-12, 1,000,000 sales rows, 16 row groups, 22.5 MB, batch
+Latest run: 2026-11-18, 1,000,000 sales rows, 16 row groups, 22.5 MB, batch
 8,192, AMD Ryzen 7 170 (16 logical CPUs), 7.4 GiB RAM in WSL2, Ubuntu 24.04,
-CPU-only build. Five timed repetitions after two warm-ups at each scan thread
-count; DuckDB uses its default 16 threads. Every thread count is verified
-against DuckDB before timing. The GPU runs are in Sections 7.3 and 7.4 and come
-from separate CUDA sessions, because this run has no CUDA build.
+CPU-only build (`qe-cli 0.3.0`). Five timed repetitions after two warm-ups at
+each scan thread count; DuckDB uses its default 16 threads. Every thread count
+is verified against DuckDB before timing. The GPU runs are in Sections 7.3 and
+7.4 and come from separate CUDA sessions, because this run has no CUDA build.
 
 | Query | qe 1 thread | qe 4 threads | qe 8 threads | DuckDB | 1-thread ratio | 8-thread ratio |
 |---|---:|---:|---:|---:|---:|---:|
-| filter_aggregate | 4.76 | 5.15 | 4.54 | 19.90 | 0.24x | 0.23x |
-| global_aggregate | 52.27 | 26.61 | 29.64 | 33.58 | 1.56x | 0.88x |
-| empty_filter | 0.09 | 0.07 | 0.11 | 9.40 | 0.01x | 0.01x |
-| group_region | 116.50 | 54.78 | 63.42 | 41.56 | 2.80x | 1.53x |
-| group_customer | 202.56 | 137.65 | 138.89 | 104.21 | 1.94x | 1.33x |
-| topk | 119.14 | 53.38 | 58.54 | 61.41 | 1.94x | 0.95x |
-| join_country | 297.83 | 203.53 | 204.69 | 75.87 | 3.93x | 2.70x |
-| count_star | 0.01 | 0.01 | 0.01 | 7.25 | 0.00x | 0.00x |
+| filter_aggregate | 4.09 | 4.08 | 5.94 | 16.20 | 0.25x | 0.37x |
+| global_aggregate | 43.81 | 20.42 | 28.17 | 27.58 | 1.59x | 1.02x |
+| empty_filter | 0.07 | 0.07 | 0.07 | 11.88 | 0.01x | 0.01x |
+| group_region | 92.14 | 39.99 | 51.34 | 32.10 | 2.87x | 1.60x |
+| group_customer | 190.61 | 95.59 | 120.63 | 86.59 | 2.20x | 1.39x |
+| topk | 88.81 | 39.11 | 38.88 | 46.00 | 1.93x | 0.85x |
+| join_country | 293.26 | 197.88 | 161.31 | 68.32 | 4.29x | 2.36x |
+| count_star | 0.01 | 0.01 | 0.01 | 8.70 | 0.00x | 0.00x |
 
-Wins against DuckDB: 3/8 at one thread, 5/8 at four, 5/8 at eight. The parallel
+Wins against DuckDB: 3/8 at one thread, 5/8 at four, 4/8 at eight. The parallel
 scan is what moves the story: `global_aggregate` and `topk` cross below 1.0x
 once decode overlaps the single-threaded operator behind it, and the three
-remaining losses are operator-bound rather than scan-bound.
+remaining losses at four threads are operator-bound rather than scan-bound.
 
-Four threads matched or beat eight on every large scan-bound query; the lone
-exception is the sub-6 ms `filter_aggregate`, where eight threads measured
-4.54 ms against 5.15 ms, a difference inside the session's run-to-run spread.
-That is the expected shape for this dataset: 16 row groups distributed across
-`N` workers leaves two units per worker at eight threads and four at four, while
-the consumer stays serial, so the fifth through eighth readers mostly add memory
+Four threads are fastest on `filter_aggregate`, `global_aggregate`,
+`group_region`, and `group_customer`; eight threads help `join_country`
+(161.31 vs 197.88 ms) and narrowly `topk` (38.88 vs 39.11 ms). That is the
+expected shape for this dataset: 16 row groups distributed across `N` workers
+leaves two units per worker at eight threads and four at four, while the
+consumer stays serial, so the fifth through eighth readers mostly add memory
 residency and core contention. The scaling limit is the operator pipeline, not
 the decoder, which is the argument for the parallel-operator work in Section 8.
 
@@ -285,8 +285,8 @@ nothing is read. `filter_aggregate` reads a one-month slice and aggregates it.
 The engine's scan path has very little per-query overhead, while DuckDB still
 pays for its optimizer and execution framework.
 
-Two more are scan-parallel wins rather than operator wins. `topk` (0.87x) and
-`global_aggregate` (0.79x) at four threads each spend most of their single
+Two more are scan-parallel wins rather than operator wins. `topk` (0.85x) and
+`global_aggregate` (0.74x) at four threads each spend most of their single
 threaded time waiting on Parquet decode; overlapping that decode with the sort
 or aggregate behind it is enough to pass DuckDB even though DuckDB's operators
 are vectorized and parallel. This is a statement about this dataset and this
@@ -303,15 +303,48 @@ real, not because it generalizes.
 - **`group_region` / `group_customer`**: group IDs are built for the whole
   batch and the aggregates are updated in a fused pass, but grouping, result
   materialization, and the final sort all remain single-threaded. At four scan
-  threads the gaps are 1.32x and 1.32x; at eight they are 1.53x and 1.33x. The
+  threads the gaps are 1.25x and 1.10x; at eight they are 1.60x and 1.39x. The
   scan is no longer the explanation, so further progress needs a parallel
   operator rather than more decode concurrency.
 - **`join_country`**: the probe is batch-vectorized for single integer and
   string keys, but the probe loop, the per-column `Take` that materializes
   joined rows, and the following aggregate all run on one thread, while DuckDB's
-  join pipeline is vectorized and parallel. The gap is 2.68x at four threads and
-  2.70x at eight, down from 7.3x before the typed table and probe landed
+  join pipeline is vectorized and parallel. The gap is 2.90x at four threads and
+  2.36x at eight, down from 7.3x before the typed table and probe landed
   (attribution in Section 6.3). It is the largest remaining loss.
+
+### A 20-million-row scale check
+
+The committed 1M run is small enough that a single file could flatter the scan.
+One additional run used 20,000,000 sales rows in 306 row groups (448.4 MB),
+with one repetition and no warm-up to stay inside this machine's memory budget,
+so it is scaling evidence rather than a precise comparison. DuckDB still used
+its default 16 threads.
+
+| Query | qe 1 thread | qe 4 threads | qe 8 threads | DuckDB | Best ratio |
+|---|---:|---:|---:|---:|---:|
+| filter_aggregate | 60.48 | 43.45 | 65.34 | 38.75 | 1.12x |
+| global_aggregate | 885.71 | 339.62 | 338.64 | 279.94 | 1.21x |
+| empty_filter | 5.70 | 5.13 | 5.96 | 18.88 | 0.27x |
+| group_region | 1933.39 | 666.67 | 766.55 | 319.91 | 2.08x |
+| group_customer | 3211.33 | 1663.11 | 1660.07 | 912.88 | 1.82x |
+| topk | 1916.20 | 767.87 | 712.48 | 643.74 | 1.11x |
+| join_country | 5305.44 | 3602.27 | 3503.34 | 824.65 | 4.25x |
+| count_star | 1.92 | 1.91 | 1.90 | 16.11 | 0.12x |
+
+Wins are 2/8 at every thread count (`empty_filter` and `count_star`), and the
+best qe configuration is within 1.25x of DuckDB on three more queries. The join
+remains the worst loss at 4.25x. Single-thread times grow roughly with row count
+rather than collapsing (`filter_aggregate` is 14.8x its 1M time for 20x the
+rows, `join_country` 18.1x), so the 1M file was not hiding a superlinear scan
+cliff. Scan threads still help, but eight threads are slower on
+`filter_aggregate`, `empty_filter`, and `group_region`, the same contention seen
+at 1M.
+
+The 20M dataset is the largest that fits this machine: generating it peaked at
+5.88 GiB RSS on a 7.4 GiB WSL VM. A 50-100M-row run needs a chunked generator
+first; a run that swaps would measure the memory limit, not the engine. The raw
+artifact is `benchmarks/results/scale_20m_20261118.json`.
 
 The honest conclusion is the one in the brief: an engine with a parallel scan
 in front of a single-threaded operator pipeline should not be expected to beat
@@ -480,17 +513,27 @@ an opt-in parallel scan (`--threads N`) rather than a parallel executor — the
 planner and operators stay untouched, and the default build keeps the
 single-threaded behavior.
 
-The design trades decode parallelism for a strict ordering guarantee. Row
-groups are distributed round-robin to `N` workers, each owning one independent
-`parquet::arrow::FileReader` (the Arrow reader is not safe to share across
-threads). A worker decodes its row group completely, applies the pushed filters
-per `batch_size` slice, and publishes the unit; the consumer hands out batches
-only from the row group the serial reader would have reached next. A fixed
-budget of `2N` decode tokens bounds the buffer, so peak memory stays close to
-the serial scan and `--threads 1024` cannot turn into an unbounded prefetch.
-Because the batch sequence is bit-identical to the serial scan, downstream
-`COUNT`/`SUM`/`AVG` accumulation, sort stability, and output order cannot
-depend on the thread count.
+The design trades decode parallelism for a strict ordering guarantee. Each of
+the `N` workers owns an independent `parquet::arrow::FileReader` (the Arrow
+reader is not safe to share across threads). Units are claimed in row-group
+order under the coordinator's mutex, so the next unit the consumer needs always
+has an owner that already reserved a decode token; a worker decodes that row
+group completely, applies the pushed filters per `batch_size` slice, and
+publishes the unit. The consumer hands out batches only from the row group the
+serial reader would have reached next. A fixed budget of `2N` decode tokens
+bounds the buffer, so peak memory stays close to the serial scan and
+`--threads 1024` cannot turn into an unbounded prefetch. Because the batch
+sequence is bit-identical to the serial scan, downstream `COUNT`/`SUM`/`AVG`
+accumulation, sort stability, and output order cannot depend on the thread
+count.
+
+The first version assigned row groups round-robin, which deadlocked on files
+with many row groups. Workers could hold every token for later row groups while
+the worker that owned the next unit waited forever. The 20M-row scale run
+reproduced this at 306 row groups and eight threads. In-order assignment fixed
+it without changing the token budget or the output order, and a regression test
+now builds 4,096 one-row row groups, runs the query three times, and bounds each
+attempt with a 30-second timeout.
 
 Writing the thread-invariance tests caught a latent aggregate bug before the
 feature shipped. The vectorized fast path read `raw_values()` and indexed it
@@ -623,10 +666,11 @@ Three things follow from those numbers.
 1. **Transfer is not what limits the path.** At ten million rows the transfer and
    kernel together are 87.1 ms of a 752.87 ms query. The other 665.7 ms is
    host-side work, so making the data larger cannot fix the ratio.
-2. **The GPU components do not scale linearly.** Transfer grows 14.9x for 10x the
-   data and the kernel grows 46x. That is per-flush and sustained-load clock
-   behaviour on a laptop GPU rather than bandwidth, and it needs its own
-   measurement before any grouped-kernel work is justified.
+2. **The GPU components do not scale linearly in the engine path.** Transfer
+   grows 14.9x for 10x the data and the kernel time recorded by the engine grows
+   46x. Section 7.5 measures the kernel in isolation and finds linear scaling at
+   128 MiB-1 GiB, so this is not the reduction's steady-state bandwidth; the
+   per-chunk call pattern and clock behavior still need a chunk-size sweep.
 3. **The one GPU win is not a speedup claim.** `filter_aggregate` at ten million
    rows is 34.29 ms against 35.56 ms on the CPU, and DuckDB does the same query
    in 28.13 ms. A 1.3 ms difference is reported as a measurement, not a win.
@@ -636,26 +680,63 @@ GPU-resident hash table *and* the removal of the duplicate host pass, and even
 then the CPU scan in front of it costs more than DuckDB's entire query at this
 size: 525.70 ms of the 752.87 ms GPU `global_aggregate` on the host, against
 161.87 ms for all of DuckDB's work. The honest order is to remove the host pass,
-measure kernel scaling in isolation, and only then consider device-side grouping.
+use the kernel-only measurements in Section 7.5, and only then consider
+device-side grouping.
 
-### 7.5 Remaining GPU work
+### 7.5 Kernel and transfer microbenchmark
 
-The next useful steps are broader device coverage, not larger claims. Section
-7.4 changes their order: the host-side copy and the kernel's scaling come first,
-because they bound what any wider device path could win.
+The engine's GPU timings mix scanning, host buffering, transfer, and a chunked
+reduction, so the reduction itself was measured separately in
+[`cuda-microbench/`](../cuda-microbench/README.md). That project compares a naive
+atomic reduction, a shared-memory block reduction, a warp-shuffle reduction with
+`double2` loads, and CUB's `DeviceReduce::Sum` on 128 MiB to 1 GiB of doubles,
+then times pageable, pinned, and four-stream transfers. Every result is checked
+against a long-double host reference.
+
+| Input | Warp (ms) | CUB (ms) | Warp GB/s | Filter GB/s |
+|---:|---:|---:|---:|---:|
+| 128 MiB | 0.72 | 0.73 | 185.7 | 178.4 |
+| 512 MiB | 2.84 | 2.85 | 189.4 | 185.5 |
+| 1 GiB | 5.64 | 5.66 | 190.4 | 188.0 |
+
+The warp and CUB kernels reach **185-190 GB/s**, or 96-99% of the RTX 3050's
+192 GB/s theoretical bandwidth. CUB is within about 1%, so the reduction itself
+has little headroom left. The naive one-atomic-per-thread version stays around
+27.6 ms regardless of size and is 38x slower at 128 MiB. A filter-plus-aggregate
+variant stays within about 4%, so the predicate is effectively free next to the
+memory traffic.
+
+The end-to-end numbers matter more than the kernel ranking. At 1 GiB the kernel
+takes **5.64 ms**, pageable copy-plus-query takes **194.71 ms**, pinned takes
+**88.74 ms**, and four streams take **81.30 ms**. Over **93%** of the pinned
+query is host/device movement. Pinned memory is 1.7-2.2x faster than pageable,
+while four streams help only about 8% at 1 GiB on this WSL setup. The engine
+currently copies each chunk out of pageable memory, so pinned staging buffers
+and overlap are the concrete next step, not a wider kernel.
+
+Nsight Compute 2024.1.1 attaches to the process, but this WSL driver denies
+hardware performance counters with `ERR_NVGPUCTRPERM`. The profiling script
+prints the required Windows setting and exits with status 2. The bandwidth
+numbers above therefore come from CUDA event timings and the known input size,
+not from counter-verified DRAM totals.
+
+### 7.6 Remaining GPU work
+
+The next useful steps are broader device coverage, not larger claims. Sections
+7.4 and 7.5 change their order: the host-side copy and the kernel's scaling come
+first, because they bound what any wider device path could win.
 
 1. Remove the duplicate host pass: share one buffer between `SUM` and `AVG` over
    the same argument, and push Arrow buffers to the device instead of copying
    them into a `std::vector<double>` first.
-2. Measure a kernel-only reduction at several sizes to explain the 46x kernel
-   growth between one and ten million rows.
+2. Move the engine's chunk transfers to pinned staging buffers and overlap copy
+   with host decoding. The microbenchmark measured 1.7-2.2x over pageable memory
+   and only about 8% from extra streams at 1 GiB.
 3. Grouped aggregation and GPU filter kernels, starting with low-cardinality
    group keys and row-group-sized batches, after items 1 and 2.
 4. A GPU scan/decode path or fused filter to avoid paying host decoding cost
    before a transfer; without it, global aggregates remain scan-bound.
-5. Async, pinned transfers and overlap with host decoding instead of the current
-   chunk-level copy/kernel/copy sequence.
-6. Integer aggregate types, `MIN`/`MAX`, and joins.
+5. Integer aggregate types, `MIN`/`MAX`, and joins.
 
 Those paths are intentionally not claimed until they can be measured on the
 same verified device.
@@ -688,7 +769,7 @@ Version 2 work still open, in priority order:
 1. Parallel operators beyond the scan: join build/probe, aggregation, sort,
    and the executor loop itself. The 0.3.0 scan-thread measurements make this
    the priority and also pick the target: at four scan threads the three
-   remaining losses are operator-bound (1.32x, 1.32x, 2.68x) and the join is the
+   remaining losses are operator-bound (1.25x, 1.10x, 2.90x) and the join is the
    largest, so parallel aggregation alone would not move the worst case.
 2. CUDA grouped aggregation, filter kernels, and joins, with separate
    transfer/kernel timers and CPU fallback; the global floating-point path is
