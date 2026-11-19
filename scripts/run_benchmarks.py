@@ -78,7 +78,8 @@ QUERIES = [
         "id": "topk",
         "description": "Selective filter, top-k sort, then LIMIT.",
         "sql": (
-            "SELECT sale_id, amount FROM sales WHERE amount > 1000 ORDER BY amount DESC LIMIT 100"
+            "SELECT sale_id, amount FROM sales WHERE amount > 1000 "
+            "ORDER BY amount DESC, sale_id LIMIT 100"
         ),
     },
     {

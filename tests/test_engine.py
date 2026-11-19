@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Iterable
 
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -528,6 +530,41 @@ THREAD_INVARIANT_QUERIES = [
 @pytest.mark.parametrize("query", THREAD_INVARIANT_QUERIES)
 def test_thread_counts_do_not_change_results(data_dir: Path, conn, query: str) -> None:
     assert_matches_threads_invariant(data_dir, query, conn)
+
+
+def test_parallel_scan_with_many_row_groups_does_not_stall(tmp_path: Path) -> None:
+    # A single-row row group per unit makes workers race far ahead of the
+    # consumer. With the old round-robin assignment they could hold every
+    # token for later row groups and leave the next unit's worker waiting
+    # forever. The test would hang instead of failing, so bound each run.
+    rows = 4096
+    path = tmp_path / "many_groups.parquet"
+    table = pa.table(
+        {
+            "id": pa.array(range(rows), type=pa.int64()),
+            "v": pa.array([(index % 97) * 0.5 for index in range(rows)], type=pa.float64()),
+        }
+    )
+    pq.write_table(table, path, row_group_size=1)
+    expected_sum = sum((index % 97) * 0.5 for index in range(rows))
+    command = [
+        str(BINARY),
+        "--table",
+        f"many_groups={path}",
+        "--query",
+        "SELECT COUNT(*), SUM(v) FROM many_groups",
+        "--threads",
+        "8",
+        "--format",
+        "json",
+        "--no-stats",
+    ]
+    for attempt in range(3):
+        run = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert run.returncode == 0, f"attempt {attempt}: {run.stderr}"
+        rows_out = json.loads(run.stdout)["rows"]
+        assert rows_out[0][0] == rows
+        assert rows_out[0][1] == pytest.approx(expected_sum)
 
 
 def test_scan_stats_are_identical_across_threads(data_dir: Path, conn) -> None:

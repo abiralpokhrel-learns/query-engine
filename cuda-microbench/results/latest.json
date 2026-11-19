@@ -1,0 +1,66 @@
+{
+  "generated_at_utc": "2026-11-18T02:01:41Z",
+  "device": {
+    "name": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "compute_capability": "8.6",
+    "sms": 16,
+    "memory_bytes": 4294443008,
+    "memory_clock_khz": 6001000,
+    "bus_width_bits": 128,
+    "theoretical_gbps": 192.032
+  },
+  "config": {"kernel_iterations": 20, "transfer_iterations": 5},
+  "results": [
+    {
+      "elements": 16777216,
+      "bytes": 134217728,
+      "reference_sum": 1005.42232,
+      "kernels": {
+        "atomic": {"median_ms": 27.5690241, "min_ms": 27.5415039, "max_ms": 38.0169296, "gb_per_s": 4.86842507, "sum": 1005.42232, "ok": true},
+        "block": {"median_ms": 0.732671976, "min_ms": 0.729023993, "max_ms": 0.79974401, "gb_per_s": 183.189384, "sum": 1005.42232, "ok": true},
+        "warp": {"median_ms": 0.722880006, "min_ms": 0.719807982, "max_ms": 0.761152029, "gb_per_s": 185.670826, "sum": 1005.42232, "ok": true},
+        "cub": {"median_ms": 0.72616002, "min_ms": 0.715391994, "max_ms": 0.766975999, "gb_per_s": 184.832164, "sum": 1005.42232, "ok": true},
+        "filter": {"median_ms": 0.75248, "min_ms": 0.743423998, "max_ms": 0.824320018, "gb_per_s": 178.36717, "count": 8388201, "sum": 4195420.62, "ok": true}
+      },
+      "transfer": {
+        "pageable": {"ran": true, "median_ms": 18.538419, "min_ms": 17.455641, "max_ms": 20.009125, "gb_per_s": 14.4799541, "sum": 1005.42232, "ok": true},
+        "pinned": {"ran": true, "median_ms": 10.95797, "min_ms": 10.9318, "max_ms": 10.963791, "gb_per_s": 24.4968234, "sum": 1005.42232, "ok": true},
+        "four_streams": {"ran": true, "median_ms": 11.266296, "min_ms": 11.193307, "max_ms": 11.344284, "gb_per_s": 23.8264161, "sum": 1005.42232, "ok": true}
+      }
+    },
+    {
+      "elements": 67108864,
+      "bytes": 536870912,
+      "reference_sum": 5153.65179,
+      "kernels": {
+        "atomic": {"median_ms": 27.5619841, "min_ms": 27.549696, "max_ms": 27.6490231, "gb_per_s": 19.4786744, "sum": 5153.65179, "ok": true},
+        "block": {"median_ms": 2.83699191, "min_ms": 2.83340812, "max_ms": 2.96528006, "gb_per_s": 189.239494, "sum": 5153.65179, "ok": true},
+        "warp": {"median_ms": 2.83531189, "min_ms": 2.83033609, "max_ms": 2.87743998, "gb_per_s": 189.351624, "sum": 5153.65179, "ok": true},
+        "cub": {"median_ms": 2.85030401, "min_ms": 2.82419205, "max_ms": 2.88870406, "gb_per_s": 188.355667, "sum": 5153.65179, "ok": true},
+        "filter": {"median_ms": 2.8943361, "min_ms": 2.88768005, "max_ms": 3.01363206, "gb_per_s": 185.490176, "count": 33558975, "sum": 16780509.9, "ok": true}
+      },
+      "transfer": {
+        "pageable": {"ran": true, "median_ms": 72.992331, "min_ms": 68.016203, "max_ms": 73.59336, "gb_per_s": 14.7103375, "sum": 5153.65179, "ok": true},
+        "pinned": {"ran": true, "median_ms": 41.5452, "min_ms": 40.281687, "max_ms": 48.313495, "gb_per_s": 25.8451476, "sum": 5153.65179, "ok": true},
+        "four_streams": {"ran": true, "median_ms": 41.619127, "min_ms": 41.184693, "max_ms": 43.25679, "gb_per_s": 25.7992395, "sum": 5153.65179, "ok": true}
+      }
+    },
+    {
+      "elements": 134217728,
+      "bytes": 1.07374182e+09,
+      "reference_sum": 3645.64027,
+      "kernels": {
+        "atomic": {"median_ms": 27.6848316, "min_ms": 27.6746235, "max_ms": 37.9781113, "gb_per_s": 38.7844809, "sum": 3645.64027, "ok": true},
+        "block": {"median_ms": 5.63967991, "min_ms": 5.63689613, "max_ms": 5.67196798, "gb_per_s": 190.390561, "sum": 3645.64027, "ok": true},
+        "warp": {"median_ms": 5.6379199, "min_ms": 5.63199997, "max_ms": 5.6801281, "gb_per_s": 190.449996, "sum": 3645.64027, "ok": true},
+        "cub": {"median_ms": 5.65708804, "min_ms": 5.6309762, "max_ms": 5.72396803, "gb_per_s": 189.804687, "sum": 3645.64027, "ok": true},
+        "filter": {"median_ms": 5.71275187, "min_ms": 5.6997118, "max_ms": 6.00883198, "gb_per_s": 187.955271, "count": 67110152, "sum": 33558348.8, "ok": true}
+      },
+      "transfer": {
+        "pageable": {"ran": true, "median_ms": 194.71109, "min_ms": 179.453296, "max_ms": 205.479905, "gb_per_s": 11.0290772, "sum": 3645.64027, "ok": true},
+        "pinned": {"ran": true, "median_ms": 88.738049, "min_ms": 84.302508, "max_ms": 91.154813, "gb_per_s": 24.2002576, "sum": 3645.64027, "ok": true},
+        "four_streams": {"ran": true, "median_ms": 81.297685, "min_ms": 80.028386, "max_ms": 85.356517, "gb_per_s": 26.4150652, "sum": 3645.64027, "ok": true}
+      }
+    }
+  ]
+}

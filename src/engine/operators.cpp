@@ -426,7 +426,8 @@ struct ScanOperator::Prefetch {
   std::mutex mu;
   std::condition_variable cv;
   std::vector<Unit> units;
-  size_t next_unit = 0; // row-group unit the consumer expects next
+  size_t next_unit = 0;       // row-group unit the consumer expects next
+  size_t next_assignment = 0; // next unit handed to a worker, in row-group order
   int worker_count = 0;
   int tokens = 0;
   arrow::Status error;
@@ -549,26 +550,30 @@ arrow::Status ScanOperator::StartWorkers() {
     auto worker_reader = std::move(worker_reader_result).ValueOrDie();
     prefetch_->threads.emplace_back([state, schema, worker_reader = std::move(worker_reader),
                                      row_groups = row_groups_, columns = column_indices_,
-                                     batch_size = batch_size_, filters = filters_, w]() {
+                                     batch_size = batch_size_, filters = filters_]() {
       auto fail = [state](arrow::Status status) {
         std::lock_guard<std::mutex> guard(state->mu);
         state->error = std::move(status);
         state->cv.notify_all();
       };
 
-      const int workers = state->worker_count;
-      const int units = static_cast<int>(state->units.size());
-      for (int ordinal = w; ordinal < units; ordinal += workers) {
+      while (true) {
+        int ordinal = -1;
         {
-          // One token per decoded-but-not-yet-consumed row group bounds
-          // the peak memory of the pipeline. Workers also stop promptly on
-          // a peer's error instead of filling memory behind it.
+          // One token per decoded-but-not-yet-consumed row group bounds the
+          // peak memory of the pipeline. Units are claimed in row-group order:
+          // the unit the consumer needs next always has an owner that already
+          // reserved a token, so a worker racing ahead cannot starve it.
           std::unique_lock<std::mutex> guard(state->mu);
           state->cv.wait(guard, [state] {
             return state->tokens > 0 || state->shutting_down || !state->error.ok();
           });
           if (state->shutting_down || !state->error.ok())
             return;
+          if (state->next_assignment >= state->units.size())
+            return;
+          ordinal = static_cast<int>(state->next_assignment);
+          ++state->next_assignment;
           --state->tokens;
         }
 
