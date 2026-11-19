@@ -44,6 +44,7 @@ struct Options {
   int64_t max_rows = -2; // -2 means: 50 for tables, all rows for JSON.
   bool max_rows_set = false;
   bool explain = false;
+  bool explain_analyze = false;
   int repeat = 1;
   int threads = 1;
   bool show_stats = true;
@@ -128,6 +129,8 @@ void PrintUsage(std::ostream& out) {
       << "  --threads N           Parallel scan workers for row-group decoding\n"
       << "                        (default: 1). Results never depend on this.\n"
       << "  --explain             Print the optimized plan and do not execute.\n"
+      << "  --explain-analyze     Execute once and print per-operator time and rows.\n"
+      << "                        SQL form: EXPLAIN ANALYZE SELECT ...\n"
       << "  --repeat N            Execute the query N times and report the last result.\n"
       << "  --gpu                 Use the optional CUDA global-aggregate path where\n"
       << "                        supported; the CPU path remains the default.\n"
@@ -181,6 +184,10 @@ Options ParseOptions(int argc, char** argv) {
     }
     if (arg == "--explain") {
       options.explain = true;
+      continue;
+    }
+    if (arg == "--explain-analyze") {
+      options.explain_analyze = true;
       continue;
     }
     if (arg == "--no-stats") {
@@ -374,7 +381,8 @@ int Run(int argc, char** argv) {
   const auto plan_end = Clock::now();
   qe::QueryPlan plan = std::move(planned).ValueOrDie();
 
-  if (options.explain) {
+  const bool analyze = options.explain_analyze || (statement.explain && statement.analyze);
+  if ((options.explain || statement.explain) && !analyze) {
     std::cout << plan.explain;
     const double load_ms = Milliseconds(load_start, load_end);
     const double parse_ms = Milliseconds(parse_start, parse_end);
@@ -388,6 +396,7 @@ int Run(int argc, char** argv) {
   execution_options.batch_size = options.batch_size;
   execution_options.use_gpu = options.use_gpu;
   execution_options.threads = options.threads;
+  execution_options.profile = analyze;
   if (options.use_gpu) {
     const qe::gpu::DeviceInfo device = qe::gpu::QueryDevice();
     if (!device.build_enabled) {
@@ -408,10 +417,14 @@ int Run(int argc, char** argv) {
     }
   }
 
+  // EXPLAIN ANALYZE profiles one timed run. Repeating it would overwrite the
+  // tree and make the printed rows ambiguous.
+  const int runs = analyze ? 1 : options.repeat;
+
   qe::ExecutionResult result;
   std::vector<double> execute_times;
-  execute_times.reserve(static_cast<size_t>(options.repeat));
-  for (int run = 0; run < options.repeat; ++run) {
+  execute_times.reserve(static_cast<size_t>(runs));
+  for (int run = 0; run < runs; ++run) {
     auto executed = qe::ExecutePlan(plan.root, execution_options);
     if (!executed.ok()) {
       std::cerr << "error: " << executed.status().ToString() << '\n';
@@ -421,7 +434,13 @@ int Run(int argc, char** argv) {
     execute_times.push_back(result.execute_ms);
   }
 
-  if (options.format == "json") {
+  if (analyze) {
+    if (!result.profile) {
+      std::cerr << "error: EXPLAIN ANALYZE produced no profile\n";
+      return 1;
+    }
+    qe::PrintProfile(*result.profile, result.execute_ms, std::cout);
+  } else if (options.format == "json") {
     std::cout << qe::TableToJson(*result.table, max_rows) << '\n';
   } else {
     qe::PrintTable(*result.table, max_rows, std::cout);
@@ -435,7 +454,7 @@ int Run(int argc, char** argv) {
   const double total_ms = Milliseconds(program_start, end);
 
   std::cerr << std::fixed << std::setprecision(3);
-  if (options.repeat == 1) {
+  if (runs == 1) {
     std::cerr << "timings: catalog_ms=" << load_ms << " parse_ms=" << parse_ms
               << " plan_ms=" << plan_ms << " execute_ms=" << median_ms << " total_ms=" << total_ms
               << '\n';
@@ -448,7 +467,7 @@ int Run(int argc, char** argv) {
               << " plan_ms=" << plan_ms << " execute_ms=" << median_ms
               << " execute_min_ms=" << *std::min_element(execute_times.begin(), execute_times.end())
               << " execute_max_ms=" << *std::max_element(execute_times.begin(), execute_times.end())
-              << " total_ms=" << total_ms << " runs=" << options.repeat << '\n';
+              << " total_ms=" << total_ms << " runs=" << runs << '\n';
   }
   if (options.use_gpu)
     PrintGpuStats(result.stats);

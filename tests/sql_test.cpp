@@ -178,6 +178,21 @@ void TestLikeInsidePredicate() {
   Check(stmt.where->left->binary_op == qe::sql::BinaryOp::Like, "LIKE conjunct");
 }
 
+void TestExplain() {
+  qe::sql::Parser plan_only("EXPLAIN SELECT region FROM sales");
+  auto plan_stmt = plan_only.Parse();
+  Check(plan_stmt.explain, "EXPLAIN flag");
+  Check(!plan_stmt.analyze, "EXPLAIN does not analyze");
+
+  qe::sql::Parser analyzed("EXPLAIN ANALYZE SELECT region, COUNT(*) FROM sales GROUP BY region");
+  auto analyze_stmt = analyzed.Parse();
+  Check(analyze_stmt.explain, "EXPLAIN ANALYZE explain flag");
+  Check(analyze_stmt.analyze, "EXPLAIN ANALYZE analyze flag");
+  Check(analyze_stmt.items.size() == 2, "EXPLAIN ANALYZE query items");
+
+  ExpectSqlError("EXPLAIN ANALYZE DELETE FROM t", "expected SELECT after EXPLAIN ANALYZE");
+}
+
 void TestRejections() {
   ExpectSqlError("SELECT * FROM t RIGHT JOIN u ON t.id = u.id", "RIGHT JOIN");
   ExpectSqlError("SELECT * FROM t FULL JOIN u ON t.id = u.id", "FULL JOIN");
@@ -225,6 +240,7 @@ int main() {
   TestInAndBetween();
   TestLike();
   TestLikeInsidePredicate();
+  TestExplain();
   TestRejections();
   TestOrderOrdinal();
 

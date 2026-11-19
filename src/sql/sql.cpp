@@ -12,14 +12,14 @@ namespace {
 
 const std::unordered_set<std::string>& Keywords() {
   static const std::unordered_set<std::string> keywords = {
-      "SELECT",  "FROM",  "WHERE",    "GROUP",    "BY",     "ORDER",  "ASC",    "DESC",  "LIMIT",
-      "JOIN",    "INNER", "LEFT",     "RIGHT",    "FULL",   "OUTER",  "CROSS",  "ON",    "AS",
-      "AND",     "OR",    "NOT",      "IS",       "NULL",   "TRUE",   "FALSE",  "COUNT", "SUM",
-      "AVG",     "MIN",   "MAX",      "DISTINCT", "HAVING", "UNION",  "OFFSET", "LIKE",  "IN",
-      "BETWEEN", "CASE",  "WHEN",     "THEN",     "ELSE",   "END",    "WITH",   "CAST",  "NULLS",
-      "FIRST",   "LAST",  "EXISTS",   "ALL",      "ANY",    "ASOF",   "SEMI",   "ANTI",  "USING",
-      "NATURAL", "TOP",   "INSERT",   "UPDATE",   "DELETE", "CREATE", "DROP",   "ALTER", "EXPLAIN",
-      "PRAGMA",  "SHOW",  "DESCRIBE",
+      "SELECT",  "FROM",   "WHERE",  "GROUP",    "BY",     "ORDER",  "ASC",    "DESC",  "LIMIT",
+      "JOIN",    "INNER",  "LEFT",   "RIGHT",    "FULL",   "OUTER",  "CROSS",  "ON",    "AS",
+      "AND",     "OR",     "NOT",    "IS",       "NULL",   "TRUE",   "FALSE",  "COUNT", "SUM",
+      "AVG",     "MIN",    "MAX",    "DISTINCT", "HAVING", "UNION",  "OFFSET", "LIKE",  "IN",
+      "BETWEEN", "CASE",   "WHEN",   "THEN",     "ELSE",   "END",    "WITH",   "CAST",  "NULLS",
+      "FIRST",   "LAST",   "EXISTS", "ALL",      "ANY",    "ASOF",   "SEMI",   "ANTI",  "USING",
+      "NATURAL", "TOP",    "INSERT", "UPDATE",   "DELETE", "CREATE", "DROP",   "ALTER", "EXPLAIN",
+      "ANALYZE", "PRAGMA", "SHOW",   "DESCRIBE",
   };
   return keywords;
 }
@@ -375,7 +375,18 @@ void Parser::Error(const std::string& message, size_t position) const {
 }
 
 SelectStmt Parser::Parse() {
-  if (!MatchKeyword("SELECT")) {
+  bool explain = false;
+  bool analyze = false;
+  if (MatchKeyword("EXPLAIN")) {
+    explain = true;
+    if (MatchKeyword("ANALYZE"))
+      analyze = true;
+    if (!MatchKeyword("SELECT")) {
+      const Token& token = Peek();
+      Error("expected SELECT after EXPLAIN" + std::string(analyze ? " ANALYZE" : ""),
+            token.position);
+    }
+  } else if (!MatchKeyword("SELECT")) {
     const Token& token = Peek();
     if (token.type == TokenType::Keyword &&
         (token.text == "INSERT" || token.text == "UPDATE" || token.text == "DELETE")) {
@@ -384,6 +395,8 @@ SelectStmt Parser::Parse() {
     Error("expected SELECT at the start of the query", token.position);
   }
   SelectStmt stmt = ParseSelect();
+  stmt.explain = explain;
+  stmt.analyze = analyze;
   ExpectEnd();
   return stmt;
 }
