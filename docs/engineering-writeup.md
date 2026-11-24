@@ -155,6 +155,31 @@ accumulator and reports overflow instead of wrapping. `MIN`/`MAX` preserve the
 input type and handle dates, strings, booleans, and numerics. `NULL` ordering
 matches DuckDB: ascending puts `NULL`s last, descending puts them first.
 
+### 2.4 Per-operator profiling
+
+`EXPLAIN ANALYZE` and `--explain-analyze` wrap every physical operator in a
+timing decorator. Each wrapper records the wall time of its `Next()` calls, the
+number of non-null batches, and the rows in those batches. Inclusive time
+therefore includes every child pull; the printed self time subtracts direct
+child inclusive time. This attribution works for a pull pipeline without
+instrumenting each operator's internals and is disabled during normal execution,
+so the hot path is unchanged.
+
+The tree keeps planner labels (`HashAggregate`, `HashJoin`, `Scan sales`) and
+their details, which makes the output recognizable next to `EXPLAIN`. The
+profiler measures actual rows, not estimates: a scan reports rows after
+pushdown, an aggregate reports output groups, and a limit reports only the rows
+it emitted before stopping its child.
+
+`profiling/README.md` records the lower-level profile. `perf` is not available
+under this WSL2 kernel, so the fallback is Valgrind 3.22 callgrind, collected
+only inside `qe::ExecutePlan` to exclude loader and startup costs. The committed
+run executes 132,680,989 instructions; Parquet decode, Snappy decompression, and
+Arrow builders account for about 52%, Arrow filter/take plus `qe::ApplyFilter`
+about 12%, and the aggregate's own accumulation and group-id work about 9%. That
+is the same ordering `EXPLAIN ANALYZE` shows, which is the point of having both
+views.
+
 ## 3. Correctness strategy
 
 Correctness is defined as "same rows, same values, same order as DuckDB on the
